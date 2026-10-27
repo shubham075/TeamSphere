@@ -6,7 +6,7 @@ import { hash, verify } from '@node-rs/argon2';
 import type { Request } from 'express';
 import { z } from 'zod';
 import {
-  ChangePasswordInput, changePasswordSchema, CreateUserInput, createUserSchema, PresenceInfo, PublicUser,
+  ChangePasswordInput, changePasswordSchema, passwordSchema, CreateUserInput, createUserSchema, PresenceInfo, PublicUser,
   SetPresenceInput, setPresenceSchema, SetStatusMessageInput, setStatusMessageSchema, UpdateProfileInput,
   updateProfileSchema,
 } from '@teamsphere/shared';
@@ -19,6 +19,7 @@ import { ZodPipe } from '../common/zod.pipe';
 import { toPublicUser } from './users.mapper';
 
 const setActiveSchema = z.object({ isActive: z.boolean() });
+const resetPasswordSchema = z.object({ password: passwordSchema });
 
 @Controller('users')
 export class UsersController {
@@ -97,11 +98,17 @@ export class UsersController {
 
   /** People directory / people picker. */
   @Get()
-  async search(@Query('q') q = '', @Query('take') take = '25'): Promise<PublicUser[]> {
+  async search(
+    @CurrentUser() me: AuthUser,
+    @Query('q') q = '',
+    @Query('take') take = '25',
+    @Query('includeInactive') includeInactive?: string,
+  ): Promise<PublicUser[]> {
     const term = q.trim();
     const users = await this.prisma.user.findMany({
       where: {
-        isActive: true,
+        // Admins can list disabled accounts (to re-enable them); everyone else only sees active people.
+        ...(includeInactive === '1' && me.role === 'admin' ? {} : { isActive: true }),
         ...(term
           ? {
               OR: [
@@ -145,6 +152,24 @@ export class UsersController {
     });
     this.audit.log({ actorId: me.id, action: 'admin.user_created', targetType: 'user', targetId: user.id });
     return toPublicUser(user);
+  }
+
+  @Roles('admin')
+  @Post(':id/password')
+  @HttpCode(204)
+  async resetPassword(
+    @CurrentUser() me: AuthUser,
+    @Param('id') id: string,
+    @Body(new ZodPipe(resetPasswordSchema)) body: z.infer<typeof resetPasswordSchema>,
+  ): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    if (!user) throw new NotFoundException();
+    if (user.authProvider !== 'local') {
+      throw new BadRequestException('This person signs in with the company directory; reset their password there');
+    }
+    await this.prisma.user.update({ where: { id }, data: { passwordHash: await hash(body.password) } });
+    await this.sessions.revokeAll(id);
+    this.audit.log({ actorId: me.id, action: 'admin.password_reset', targetType: 'user', targetId: id });
   }
 
   @Roles('admin')

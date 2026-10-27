@@ -396,7 +396,7 @@ function AdminUsers() {
   const [q, setQ] = useState('');
   const { data: users } = useQuery({
     queryKey: ['admin-users', q],
-    queryFn: () => api<PublicUser[]>(`/users?take=100&q=${encodeURIComponent(q)}`),
+    queryFn: () => api<PublicUser[]>(`/users?take=100&includeInactive=1&q=${encodeURIComponent(q)}`),
   });
   const [form, setForm] = useState({ username: '', displayName: '', email: '', password: '', role: 'user' });
   const set = (k: keyof typeof form) => (v: string) => setForm((f) => ({ ...f, [k]: v }));
@@ -411,6 +411,10 @@ function AdminUsers() {
   const toggle = useMutation({
     mutationFn: (u: PublicUser) => api(`/users/${u.id}/active`, { method: 'PATCH', json: { isActive: !u.isActive } }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-users'] }),
+  });
+  const reset = useMutation({
+    mutationFn: ({ id, password }: { id: string; password: string }) =>
+      api(`/users/${id}/password`, { method: 'POST', json: { password } }),
   });
 
   return (
@@ -472,18 +476,30 @@ function AdminUsers() {
                 <p className="truncate font-medium">{u.displayName}</p>
                 <p className="truncate text-xs text-muted">
                   {u.username} · {u.role} · {u.authProvider}
+                  {!u.isActive && <span className="ml-1 font-semibold text-danger">· disabled</span>}
                 </p>
               </div>
+              {u.authProvider === 'local' && (
+                <button
+                  onClick={() => {
+                    const password = prompt(`New temporary password for ${u.displayName} (8+ characters):`);
+                    if (password) reset.mutate({ id: u.id, password });
+                  }}
+                  className="rounded-md border border-border px-3 py-1.5 hover:bg-surface-hover"
+                >
+                  Reset password
+                </button>
+              )}
               <button
                 onClick={() => toggle.mutate(u)}
-                className="rounded-md border border-border px-3 py-1.5 hover:bg-surface-hover"
+                className={clsx('rounded-md border px-3 py-1.5 hover:bg-surface-hover', u.isActive ? 'border-border' : 'border-brand text-brand')}
               >
-                Disable
+                {u.isActive ? 'Disable' : 'Enable'}
               </button>
             </li>
           ))}
         </ul>
-        <Notice error={errorText(toggle.error)} />
+        <Notice error={errorText(toggle.error ?? reset.error)} ok={reset.isSuccess ? 'Password reset. Their other sessions were signed out.' : null} />
       </Card>
     </>
   );
