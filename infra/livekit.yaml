@@ -1,0 +1,15 @@
+# LiveKit SFU — development config.
+# In production: set real keys, enable TURN/TLS on 443, and widen the UDP port range.
+port: 7880
+rtc:
+  tcp_port: 7881
+  udp_port: 7882
+  use_external_ip: false
+  # Docker Desktop: advertise loopback so browsers on this machine can reach the SFU.
+  node_ip: 127.0.0.1
+redis:
+  address: redis:6379
+keys:
+  devkey: devsecret_change_me_at_least_32_chars_long
+logging:
+  level: info

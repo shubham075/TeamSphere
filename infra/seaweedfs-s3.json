@@ -1,0 +1,11 @@
+{
+  "identities": [
+    {
+      "name": "teamsphere",
+      "credentials": [
+        { "accessKey": "teamsphere", "secretKey": "teamsphere-secret" }
+      ],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

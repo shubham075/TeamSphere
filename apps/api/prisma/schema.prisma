@@ -1,0 +1,100 @@
+// TeamSphere data model. See SOURCE_OF_TRUTH.md §7; module tables are added per phase.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AuthProvider {
+  local
+  entra
+  ldap
+}
+
+enum UserRole {
+  admin
+  user
+  guest
+}
+
+model User {
+  id            String       @id @default(cuid())
+  username      String       @unique
+  email         String?      @unique
+  passwordHash  String?
+  /// How the account was first created. Linked sign-in methods live in UserIdentity.
+  authProvider  AuthProvider @default(local)
+  displayName   String
+  avatarKey     String?
+  jobTitle      String?
+  department    String?
+  office        String?
+  phone         String?
+  managerId     String?
+  manager       User?        @relation("Manager", fields: [managerId], references: [id], onDelete: SetNull)
+  reports       User[]       @relation("Manager")
+  role          UserRole     @default(user)
+  isActive      Boolean      @default(true)
+
+  /// Manually chosen presence; null means automatic (available while connected).
+  presenceStatus     String?
+  presenceExpiresAt  DateTime?
+  statusMessage      String?
+  statusExpiresAt    DateTime?
+
+  lastLoginAt   DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  sessions      Session[]
+  identities    UserIdentity[]
+  auditLogs     AuditLog[]
+}
+
+/// A directory sign-in linked to a user. One person can have both an AD and an Entra identity (hybrid AD).
+model UserIdentity {
+  id         String       @id @default(cuid())
+  userId     String
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider   AuthProvider
+  /// Entra `oid` claim or AD `objectGUID` (hex).
+  externalId String
+  createdAt  DateTime     @default(now())
+
+  @@unique([provider, externalId])
+  @@index([userId])
+}
+
+model Session {
+  id               String    @id @default(cuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokenHash String    @unique
+  userAgent        String?
+  ip               String?
+  createdAt        DateTime  @default(now())
+  lastUsedAt       DateTime  @default(now())
+  expiresAt        DateTime
+  revokedAt        DateTime?
+
+  @@index([userId])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action     String
+  targetType String?
+  targetId   String?
+  meta       Json?
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  @@index([actorId])
+  @@index([action, createdAt])
+}

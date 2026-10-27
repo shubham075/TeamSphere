@@ -1,0 +1,19 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Packages allowed to run install scripts (Prisma engines, esbuild binaries, etc.).
+allowBuilds:
+  "@prisma/client": true
+  "@prisma/engines": true
+  prisma: true
+  esbuild: true
+  "@nestjs/core": true
+  sharp: true
+  unrs-resolver: true
+  electron: true
+  # Squirrel installer helper pulled in by electron-builder; we ship NSIS + MSI instead.
+  electron-winstaller: false
+
+minimumReleaseAgeExclude:
+  - electron@44.10.0

@@ -1,0 +1,20 @@
+{
+  "name": "teamsphere",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@12.8.1",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "infra:up": "docker compose -f infra/docker-compose.yml up -d",
+    "infra:down": "docker compose -f infra/docker-compose.yml down",
+    "build:shared": "pnpm --filter @teamsphere/shared build",
+    "db:migrate": "pnpm --filter @teamsphere/api prisma:migrate",
+    "db:seed": "pnpm --filter @teamsphere/api prisma:seed",
+    "dev": "pnpm build:shared && pnpm -r --parallel --filter @teamsphere/shared --filter @teamsphere/api --filter @teamsphere/web dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test"
+  }
+}

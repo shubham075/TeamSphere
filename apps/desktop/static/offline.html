@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:" />
+    <title>TeamSphere</title>
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body>
+    <main class="center">
+      <div class="card stack">
+        <div class="brand">
+          <img src="../assets/icon.png" alt="" />
+          <h1>Can't reach TeamSphere</h1>
+          <p class="muted">Check your network or VPN connection. We'll keep trying.</p>
+        </div>
+        <p class="muted">Server: <strong id="server"></strong></p>
+        <p id="detail" class="hint"></p>
+        <div class="row">
+          <button id="change" type="button">Change server</button>
+          <button id="retry" class="primary" type="button">Try again</button>
+        </div>
+      </div>
+    </main>
+    <script src="offline.js"></script>
+  </body>
+</html>

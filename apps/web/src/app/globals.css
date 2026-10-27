@@ -1,0 +1,84 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Design tokens. Components use the Tailwind names in @theme below (bg-surface, text-muted, …). */
+:root {
+  --bg: #f5f5f8;
+  --surface: #ffffff;
+  --surface-2: #f0f0f5;
+  --surface-hover: #ebebf2;
+  --rail: #ebebf3;
+  --titlebar: #4f46e5;
+  --titlebar-text: #ffffff;
+  --border: #e1e1ea;
+  --text: #1f1f2b;
+  --text-muted: #61617a;
+  --brand: #5b5bd6;
+  --brand-hover: #4a4ac4;
+  --brand-soft: #e8e8fb;
+  --brand-text: #ffffff;
+  --danger: #c4314b;
+  --success: #13a10e;
+
+  --presence-available: #13a10e;
+  --presence-busy: #c4314b;
+  --presence-away: #f8c100;
+  --presence-offline: #8a8a9e;
+}
+
+.dark {
+  --bg: #141418;
+  --surface: #1e1e24;
+  --surface-2: #26262e;
+  --surface-hover: #2e2e38;
+  --rail: #18181d;
+  --titlebar: #232333;
+  --titlebar-text: #e8e8f0;
+  --border: #33333d;
+  --text: #ececf2;
+  --text-muted: #a0a0b4;
+  --brand: #7f7fea;
+  --brand-hover: #9393f0;
+  --brand-soft: #2c2c4a;
+  --brand-text: #ffffff;
+  --danger: #f1707b;
+  --success: #6bcb64;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-hover: var(--surface-hover);
+  --color-rail: var(--rail);
+  --color-titlebar: var(--titlebar);
+  --color-titlebar-text: var(--titlebar-text);
+  --color-border: var(--border);
+  --color-text: var(--text);
+  --color-muted: var(--text-muted);
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-text: var(--brand-text);
+  --color-danger: var(--danger);
+  --color-success: var(--success);
+  --font-sans: 'Segoe UI Variable', 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}

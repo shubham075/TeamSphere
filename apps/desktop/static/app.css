@@ -1,0 +1,61 @@
+:root {
+  --bg: #f5f5f8;
+  --surface: #ffffff;
+  --surface-2: #f0f0f5;
+  --border: #e1e1ea;
+  --text: #1f1f2b;
+  --muted: #61617a;
+  --brand: #5b5bd6;
+  --brand-hover: #4a4ac4;
+  --danger: #c4314b;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141418;
+    --surface: #1e1e24;
+    --surface-2: #26262e;
+    --border: #33333d;
+    --text: #ececf2;
+    --muted: #a0a0b4;
+    --brand: #7f7fea;
+    --brand-hover: #9393f0;
+    --danger: #f1707b;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font: 14px/1.45 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+.center { min-height: 100%; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.card {
+  width: 100%; max-width: 420px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; padding: 32px; box-shadow: 0 20px 50px rgba(30, 27, 75, 0.12);
+}
+.brand { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; margin-bottom: 24px; }
+.brand img { width: 56px; height: 56px; }
+h1 { font-size: 22px; font-weight: 600; margin: 0; }
+p.muted, .muted { color: var(--muted); margin: 0; }
+label { display: flex; flex-direction: column; gap: 6px; font-weight: 600; }
+input[type='text'] {
+  font: inherit; color: inherit; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 6px; padding: 9px 12px; outline: none;
+}
+input[type='text']:focus { border-color: var(--brand); }
+button {
+  font: inherit; font-weight: 600; border-radius: 6px; padding: 9px 16px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+}
+button:hover { background: var(--surface-2); }
+button.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+button.primary:hover { background: var(--brand-hover); }
+button:disabled { opacity: 0.6; cursor: default; }
+:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.error { color: var(--danger); font-size: 13px; min-height: 18px; margin: 0; }
+.stack { display: flex; flex-direction: column; gap: 16px; }
+.row { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+.hint { font-size: 12px; color: var(--muted); font-weight: 400; }

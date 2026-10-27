@@ -1,0 +1,51 @@
+# Windows packaging for TeamSphere. Produces an NSIS installer (per-user) and an MSI (per-machine, for IT deployment).
+appId: com.teamsphere.desktop
+productName: TeamSphere
+copyright: Copyright © TeamSphere
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**
+  - static/**
+  - assets/**
+  - package.json
+
+protocols:
+  - name: TeamSphere
+    schemes: [teamsphere]
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: msi
+      arch: [x64]
+  icon: build/icon.png
+  # Set CSC_LINK / CSC_KEY_PASSWORD env vars to sign with the company's Authenticode certificate.
+  signAndEditExecutable: true
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: TeamSphere
+  artifactName: TeamSphere-Setup-${version}.${ext}
+
+msi:
+  oneClick: true
+  perMachine: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: TeamSphere
+  artifactName: TeamSphere-${version}-x64.${ext}
+
+# Auto-update feed. The app overrides this at runtime with <server>/desktop/ (see src/updater.ts),
+# so one build works for any company server. Upload latest.yml + the .exe there on each release.
+publish:
+  - provider: generic
+    url: https://teamsphere.invalid/desktop/

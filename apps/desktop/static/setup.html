@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:" />
+    <title>TeamSphere</title>
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body>
+    <main class="center">
+      <form id="form" class="card stack">
+        <div class="brand">
+          <img src="../assets/icon.png" alt="" />
+          <h1>Welcome to TeamSphere</h1>
+          <p class="muted">Enter your company's TeamSphere server to get started.</p>
+        </div>
+        <label>
+          Server address
+          <input id="server" type="text" autofocus required placeholder="teamsphere.company.local" spellcheck="false" />
+          <span class="hint">Your IT team can tell you this address.</span>
+        </label>
+        <p id="error" class="error" role="alert"></p>
+        <button id="submit" class="primary" type="submit">Connect</button>
+      </form>
+    </main>
+    <script src="setup.js"></script>
+  </body>
+</html>
