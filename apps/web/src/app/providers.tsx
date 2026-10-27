@@ -11,11 +11,20 @@ export function Providers({ children }: { children: React.ReactNode }) {
     () => new QueryClient({ defaultOptions: { queries: { staleTime: 30_000, retry: 1 } } }),
   );
 
-  // Restore the session from the refresh cookie on first load.
+  // Restore the session from the refresh cookie on first load. If the server is briefly down
+  // (restart, deploy), keep retrying rather than sending the user to the sign-in page.
   useEffect(() => {
-    refreshSession().then((s) => {
-      if (!s) useAuth.getState().clear();
-    });
+    let timer: ReturnType<typeof setTimeout>;
+    const attempt = () =>
+      refreshSession()
+        .then((s) => {
+          if (!s) useAuth.getState().clear();
+        })
+        .catch(() => {
+          timer = setTimeout(attempt, 3000);
+        });
+    void attempt();
+    return () => clearTimeout(timer);
   }, []);
 
   // Follow OS theme changes when the preference is "system".

@@ -21,6 +21,13 @@ export const PRESENCE_LABELS: Record<PresenceStatus, string> = {
   ooo: 'Out of office',
 };
 
+/** How a status reads when shown for someone else ("Appear away" is only a menu choice). */
+export const PRESENCE_LABELS_OTHERS: Record<PresenceStatus, string> = {
+  ...PRESENCE_LABELS,
+  away: 'Away',
+  offline: 'Offline',
+};
+
 export const setPresenceSchema = z.object({
   status: z.enum(MANUAL_PRESENCE),
   /** ISO timestamp after which the status resets to automatic. */

@@ -13,6 +13,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { SessionService } from '../auth/session.service';
+import { computePresence, PresenceService } from '../presence/presence.service';
 import { AuthUser, CurrentUser, Roles } from '../common/auth.decorators';
 import { ZodPipe } from '../common/zod.pipe';
 import { toPublicUser } from './users.mapper';
@@ -25,12 +26,13 @@ export class UsersController {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly sessions: SessionService,
+    private readonly presence: PresenceService,
   ) {}
 
   @Get('me')
   async me(@CurrentUser() me: AuthUser): Promise<PublicUser & { presence: PresenceInfo }> {
     const user = await this.prisma.user.findUniqueOrThrow({ where: { id: me.id } });
-    return { ...toPublicUser(user), presence: presenceOf(user) };
+    return { ...toPublicUser(user), presence: computePresence(user, true) }; // the caller is online by definition
   }
 
   @Patch('me')
@@ -76,7 +78,8 @@ export class UsersController {
         presenceExpiresAt: body.until ? new Date(body.until) : null,
       },
     });
-    return presenceOf(user);
+    await this.presence.broadcast(user.id);
+    return this.presence.get(user.id);
   }
 
   @Put('me/status-message')
@@ -88,7 +91,8 @@ export class UsersController {
       where: { id: me.id },
       data: { statusMessage: body.message || null, statusExpiresAt: body.expiresAt ? new Date(body.expiresAt) : null },
     });
-    return presenceOf(user);
+    await this.presence.broadcast(user.id);
+    return this.presence.get(user.id);
   }
 
   /** People directory / people picker. */
@@ -161,17 +165,4 @@ export class UsersController {
     });
     return toPublicUser(user);
   }
-}
-
-function presenceOf(u: {
-  id: string;
-  presenceStatus: string | null;
-  presenceExpiresAt: Date | null;
-  statusMessage: string | null;
-  statusExpiresAt: Date | null;
-}): PresenceInfo {
-  const now = new Date();
-  const manual = u.presenceStatus && (!u.presenceExpiresAt || u.presenceExpiresAt > now) ? u.presenceStatus : null;
-  const message = u.statusMessage && (!u.statusExpiresAt || u.statusExpiresAt > now) ? u.statusMessage : null;
-  return { userId: u.id, status: (manual ?? 'available') as PresenceInfo['status'], statusMessage: message };
 }

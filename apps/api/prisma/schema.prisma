@@ -22,37 +22,45 @@ enum UserRole {
 }
 
 model User {
-  id            String       @id @default(cuid())
-  username      String       @unique
-  email         String?      @unique
-  passwordHash  String?
+  id           String       @id @default(cuid())
+  username     String       @unique
+  email        String?      @unique
+  passwordHash String?
   /// How the account was first created. Linked sign-in methods live in UserIdentity.
-  authProvider  AuthProvider @default(local)
-  displayName   String
-  avatarKey     String?
-  jobTitle      String?
-  department    String?
-  office        String?
-  phone         String?
-  managerId     String?
-  manager       User?        @relation("Manager", fields: [managerId], references: [id], onDelete: SetNull)
-  reports       User[]       @relation("Manager")
-  role          UserRole     @default(user)
-  isActive      Boolean      @default(true)
+  authProvider AuthProvider @default(local)
+  displayName  String
+  avatarKey    String?
+  jobTitle     String?
+  department   String?
+  office       String?
+  phone        String?
+  managerId    String?
+  manager      User?        @relation("Manager", fields: [managerId], references: [id], onDelete: SetNull)
+  reports      User[]       @relation("Manager")
+  role         UserRole     @default(user)
+  isActive     Boolean      @default(true)
 
   /// Manually chosen presence; null means automatic (available while connected).
-  presenceStatus     String?
-  presenceExpiresAt  DateTime?
-  statusMessage      String?
-  statusExpiresAt    DateTime?
+  presenceStatus    String?
+  presenceExpiresAt DateTime?
+  statusMessage     String?
+  statusExpiresAt   DateTime?
 
-  lastLoginAt   DateTime?
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
-  sessions      Session[]
-  identities    UserIdentity[]
-  auditLogs     AuditLog[]
+  sessions   Session[]
+  identities UserIdentity[]
+  auditLogs  AuditLog[]
+
+  conversationMembers ConversationMember[]
+  messages            Message[]            @relation("MessageAuthor")
+  reactions           Reaction[]
+  mentions            Mention[]
+  attachments         Attachment[]
+  notifications       Notification[]       @relation("NotificationUser")
+  actedNotifications  Notification[]       @relation("NotificationActor")
 }
 
 /// A directory sign-in linked to a user. One person can have both an AD and an Entra identity (hybrid AD).
@@ -97,4 +105,144 @@ model AuditLog {
 
   @@index([actorId])
   @@index([action, createdAt])
+}
+
+// ---------------------------------------------------------------- Phase 1: chat
+
+enum ConversationType {
+  direct
+  group
+  self
+}
+
+enum MessageType {
+  text
+  system
+}
+
+enum Importance {
+  normal
+  important
+  urgent
+}
+
+model Conversation {
+  id            String           @id @default(cuid())
+  type          ConversationType
+  title         String?
+  /// Direct chats: the two user ids sorted and joined with ":", so each pair has exactly one chat.
+  directKey     String?          @unique
+  createdById   String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  lastMessageAt DateTime         @default(now())
+
+  members       ConversationMember[]
+  messages      Message[]
+  attachments   Attachment[]
+  notifications Notification[]
+
+  @@index([lastMessageAt])
+}
+
+model ConversationMember {
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  joinedAt       DateTime     @default(now())
+  /// Messages after this point count as unread.
+  lastReadAt     DateTime?
+  /// Set when the member was added without chat history; earlier messages are hidden from them.
+  historySince   DateTime?
+  muted          Boolean      @default(false)
+  pinned         Boolean      @default(false)
+  hidden         Boolean      @default(false)
+
+  @@id([conversationId, userId])
+  @@index([userId])
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  authorId       String?
+  author         User?        @relation("MessageAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  /// Quoted reply target.
+  parentId       String?
+  parent         Message?     @relation("Reply", fields: [parentId], references: [id], onDelete: SetNull)
+  replies        Message[]    @relation("Reply")
+  type           MessageType  @default(text)
+  /// Markdown-lite text; mentions are encoded as @[Display Name](userId).
+  body           String
+  importance     Importance   @default(normal)
+  editedAt       DateTime?
+  deletedAt      DateTime?
+  createdAt      DateTime     @default(now())
+
+  reactions     Reaction[]
+  mentions      Mention[]
+  attachments   Attachment[]
+  notifications Notification[]
+
+  @@index([conversationId, createdAt])
+}
+
+model Reaction {
+  messageId String
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emoji     String
+  createdAt DateTime @default(now())
+
+  @@id([messageId, userId, emoji])
+}
+
+model Mention {
+  messageId String
+  message   Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([messageId, userId])
+  @@index([userId])
+}
+
+model Attachment {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  /// Null until the message that carries it is sent.
+  messageId      String?
+  message        Message?     @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  uploaderId     String
+  uploader       User         @relation(fields: [uploaderId], references: [id], onDelete: Cascade)
+  fileName       String
+  mimeType       String
+  size           Int
+  storageKey     String       @unique
+  createdAt      DateTime     @default(now())
+
+  @@index([messageId])
+}
+
+/// Activity feed entries: mentions, replies, reactions (later: missed calls, team adds, app events).
+model Notification {
+  id             String        @id @default(cuid())
+  userId         String
+  user           User          @relation("NotificationUser", fields: [userId], references: [id], onDelete: Cascade)
+  type           String
+  actorId        String?
+  actor          User?         @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+  conversationId String?
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  messageId      String?
+  message        Message?      @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  preview        String?
+  readAt         DateTime?
+  createdAt      DateTime      @default(now())
+
+  @@index([userId, createdAt])
 }

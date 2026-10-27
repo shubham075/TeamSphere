@@ -3,6 +3,7 @@
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 import { DesktopIntegration } from '@/components/desktop-integration';
+import { RealtimeProvider } from '@/components/realtime-provider';
 import { AppRail } from '@/components/shell/app-rail';
 import { TitleBar } from '@/components/shell/title-bar';
 import { Logo } from '@/components/logo';
@@ -28,6 +29,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-full flex-col">
       <DesktopIntegration />
+      <RealtimeProvider />
       <TitleBar />
       <div className="flex min-h-0 flex-1">
         <AppRail />

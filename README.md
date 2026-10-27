@@ -12,7 +12,7 @@ A self-hosted team collaboration platform for internal company use: chat, teams 
 |---|---|
 | 0. Foundation: monorepo, Docker infra, auth (password, Microsoft Entra ID, Active Directory/LDAP), sessions, profile, presence, app shell, settings | ✅ Done |
 | 0.5 Windows desktop shell (Electron, NSIS + MSI installers) | ✅ Done |
-| 1. Chat & presence | 🚧 In progress |
+| 1. Chat & presence (core: realtime 1:1/group chat, mentions, reactions, files, read receipts, Activity) | ✅ Core done · remaining P1 items listed in SOURCE_OF_TRUTH |
 | 2–12. Teams/channels, calling, meetings, files, admin, apps… | Planned (see SOURCE_OF_TRUTH §9) |
 
 ---
