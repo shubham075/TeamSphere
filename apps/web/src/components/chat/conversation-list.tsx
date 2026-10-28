@@ -1,13 +1,13 @@
 'use client';
 
 import clsx from 'clsx';
-import { BellOff, Filter, Pin, SquarePen } from 'lucide-react';
+import { BellOff, Bookmark, ChevronDown, Filter, FolderPlus, Pencil, Pin, SquarePen, Trash2 } from 'lucide-react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, usePathname } from 'next/navigation';
 import { useMemo, useState } from 'react';
-import { toPlainText, type ConversationInfo } from '@teamsphere/shared';
+import { toPlainText, type ChatSectionInfo, type ConversationInfo } from '@teamsphere/shared';
 import { useAuth } from '@/lib/auth-store';
-import { conversationTitle, formatListTime, useConversations } from '@/lib/chat';
+import { conversationTitle, formatListTime, useConversations, useSectionMutations, useSections } from '@/lib/chat';
 import { useChatUi } from '@/lib/chat-store';
 import { ConversationAvatar } from './conversation-avatar';
 import { NewChatDialog } from './new-chat-dialog';
@@ -30,23 +30,74 @@ export function ConversationList() {
   const [filter, setFilter] = useState('');
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [composing, setComposing] = useState(false);
+  const { data: sections } = useSections();
+  const sectionOps = useSectionMutations();
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const pathname = usePathname();
 
   const list = useMemo(() => {
     const term = filter.trim().toLowerCase();
     return (data ?? []).filter(
       (c) =>
         (!c.hidden || c.id === activeId) &&
-        (!unreadOnly || c.unread > 0) &&
+        (!unreadOnly || c.unread > 0 || c.markedUnread) &&
         (!term || conversationTitle(c, meId).toLowerCase().includes(term)),
     );
   }, [data, filter, unreadOnly, meId, activeId]);
 
+  // Pinned wins over a custom section; chats in a deleted/unknown section fall back to Recent.
+  const sectionIds = new Set(sections?.map((s) => s.id));
   const pinned = list.filter((c) => c.pinned);
-  const recent = list.filter((c) => !c.pinned);
+  const inSection = (s: ChatSectionInfo) => list.filter((c) => !c.pinned && c.sectionId === s.id);
+  const recent = list.filter((c) => !c.pinned && !(c.sectionId && sectionIds.has(c.sectionId)));
+
+  const newSection = () => {
+    const name = prompt('Name the new section')?.trim();
+    if (name) sectionOps.create.mutate(name.slice(0, 64));
+  };
+
+  const group = (key: string, label: React.ReactNode, items: ConversationInfo[], section?: ChatSectionInfo) => (
+    <div key={key}>
+      <div className="group/section flex items-center gap-1 px-1 pt-3 pb-1">
+        <button
+          onClick={() => setCollapsed((c) => ({ ...c, [key]: !c[key] }))}
+          aria-expanded={!collapsed[key]}
+          className="flex min-w-0 flex-1 items-center gap-1 text-left text-xs font-semibold text-muted hover:text-text"
+        >
+          <ChevronDown size={12} className={clsx('shrink-0 transition-transform', collapsed[key] && '-rotate-90')} />
+          <span className="flex min-w-0 items-center gap-1 truncate">{label}</span>
+        </button>
+        {section && (
+          <span className="hidden gap-0.5 group-hover/section:flex group-focus-within/section:flex">
+            <button
+              onClick={() => {
+                const name = prompt('Rename section', section.name)?.trim();
+                if (name) sectionOps.rename.mutate({ id: section.id, name: name.slice(0, 64) });
+              }}
+              aria-label={`Rename ${section.name}`}
+              className="rounded p-0.5 text-muted hover:text-text"
+            >
+              <Pencil size={12} />
+            </button>
+            <button
+              onClick={() => confirm(`Delete the section "${section.name}"? Its chats move back to Recent.`) && sectionOps.remove.mutate(section.id)}
+              aria-label={`Delete ${section.name}`}
+              className="rounded p-0.5 text-muted hover:text-danger"
+            >
+              <Trash2 size={12} />
+            </button>
+          </span>
+        )}
+      </div>
+      {!collapsed[key] &&
+        (items.length ? <ul>{items.map(row)}</ul> : section && <p className="px-6 py-1 text-xs text-muted">Move chats here from the chat's ⋯ menu.</p>)}
+    </div>
+  );
 
   const row = (c: ConversationInfo) => {
     const active = c.id === activeId;
     const someoneTyping = typing[c.id]?.length;
+    const unreadish = c.unread > 0 || c.markedUnread;
     return (
       <li key={c.id}>
         <Link
@@ -59,18 +110,20 @@ export function ConversationList() {
           <ConversationAvatar conversation={c} meId={meId} />
           <span className="min-w-0 flex-1">
             <span className="flex items-baseline gap-2">
-              <span className={clsx('flex-1 truncate text-sm', c.unread ? 'font-bold' : 'font-medium')}>{conversationTitle(c, meId)}</span>
+              <span className={clsx('flex-1 truncate text-sm', unreadish ? 'font-bold' : 'font-medium')}>{conversationTitle(c, meId)}</span>
               <span className="shrink-0 text-[11px] text-muted">{formatListTime(c.lastMessageAt)}</span>
             </span>
             <span className="flex items-center gap-1.5">
-              <span className={clsx('flex-1 truncate text-xs', c.unread ? 'font-semibold text-text' : 'text-muted', someoneTyping && 'text-brand italic')}>
+              <span className={clsx('flex-1 truncate text-xs', unreadish ? 'font-semibold text-text' : 'text-muted', someoneTyping && 'text-brand italic')}>
                 {someoneTyping ? 'Typing…' : preview(c, meId)}
               </span>
               {c.muted && <BellOff size={12} className="shrink-0 text-muted" aria-label="Muted" />}
-              {c.unread > 0 && (
+              {c.unread > 0 ? (
                 <span className="flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-brand px-1 text-[10px] font-bold text-brand-text">
                   {c.unread > 99 ? '99+' : c.unread}
                 </span>
+              ) : (
+                c.markedUnread && <span className="h-2.5 w-2.5 rounded-full bg-brand" aria-label="Marked as unread" />
               )}
             </span>
           </span>
@@ -91,6 +144,9 @@ export function ConversationList() {
           className={clsx('rounded p-2 hover:bg-surface-hover', unreadOnly && 'bg-brand-soft text-brand')}
         >
           <Filter size={18} />
+        </button>
+        <button onClick={newSection} title="New section" aria-label="New section" className="rounded p-2 hover:bg-surface-hover">
+          <FolderPlus size={18} />
         </button>
         <button onClick={() => setComposing(true)} title="New chat" aria-label="New chat" className="rounded p-2 hover:bg-surface-hover">
           <SquarePen size={18} />
@@ -117,16 +173,25 @@ export function ConversationList() {
               </span>
             </div>
           ))}
-        {pinned.length > 0 && (
-          <>
-            <p className="flex items-center gap-1 px-2 pt-1 pb-1 text-xs font-semibold text-muted">
+        <Link
+          href="/chat/saved"
+          className={clsx('flex items-center gap-3 rounded-md px-2 py-2 text-sm font-medium', pathname === '/chat/saved' ? 'bg-brand-soft' : 'hover:bg-surface-hover')}
+        >
+          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-surface-2 text-brand">
+            <Bookmark size={16} />
+          </span>
+          Saved messages
+        </Link>
+        {pinned.length > 0 &&
+          group(
+            'pinned',
+            <>
               <Pin size={12} /> Pinned
-            </p>
-            <ul>{pinned.map(row)}</ul>
-          </>
-        )}
-        {pinned.length > 0 && recent.length > 0 && <p className="px-2 pt-3 pb-1 text-xs font-semibold text-muted">Recent</p>}
-        <ul>{recent.map(row)}</ul>
+            </>,
+            pinned,
+          )}
+        {sections?.map((s) => group(s.id, s.name, inSection(s), s))}
+        {(pinned.length > 0 || !!sections?.length) ? group('recent', 'Recent', recent) : <ul>{recent.map(row)}</ul>}
         {!isLoading && list.length === 0 && (
           <div className="px-4 py-10 text-center text-sm text-muted">
             {filter || unreadOnly ? 'No chats match.' : 'No chats yet.'}

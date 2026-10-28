@@ -46,6 +46,12 @@ model User {
   statusMessage     String?
   statusExpiresAt   DateTime?
 
+  /// Out of office: active while enabled and now is within [oooStartAt, oooEndAt) (open ends allowed).
+  oooEnabled Boolean   @default(false)
+  oooMessage String?
+  oooStartAt DateTime?
+  oooEndAt   DateTime?
+
   lastLoginAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -61,6 +67,10 @@ model User {
   attachments         Attachment[]
   notifications       Notification[]       @relation("NotificationUser")
   actedNotifications  Notification[]       @relation("NotificationActor")
+  savedMessages       SavedMessage[]
+  chatSections        ChatSection[]
+  scheduledMessages   ScheduledMessage[]
+  pollVotes           PollVote[]
 }
 
 /// A directory sign-in linked to a user. One person can have both an AD and an Entra identity (hybrid AD).
@@ -137,10 +147,11 @@ model Conversation {
   updatedAt     DateTime         @updatedAt
   lastMessageAt DateTime         @default(now())
 
-  members       ConversationMember[]
-  messages      Message[]
-  attachments   Attachment[]
-  notifications Notification[]
+  members           ConversationMember[]
+  messages          Message[]
+  attachments       Attachment[]
+  notifications     Notification[]
+  scheduledMessages ScheduledMessage[]
 
   @@index([lastMessageAt])
 }
@@ -158,6 +169,12 @@ model ConversationMember {
   muted          Boolean      @default(false)
   pinned         Boolean      @default(false)
   hidden         Boolean      @default(false)
+  /// "Mark as unread" on the whole chat; cleared by the next read.
+  markedUnread   Boolean      @default(false)
+  sectionId      String?
+  section        ChatSection? @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+  /// Last out-of-office auto-reply this member's absence triggered in the chat (at most one a day).
+  oooRepliedAt   DateTime?
 
   @@id([conversationId, userId])
   @@index([userId])
@@ -177,6 +194,8 @@ model Message {
   /// Markdown-lite text; mentions are encoded as @[Display Name](userId).
   body           String
   importance     Importance   @default(normal)
+  /// Unfurled preview of the first link in the body (LinkPreview DTO), filled in after sending.
+  linkPreview    Json?
   editedAt       DateTime?
   deletedAt      DateTime?
   createdAt      DateTime     @default(now())
@@ -185,8 +204,74 @@ model Message {
   mentions      Mention[]
   attachments   Attachment[]
   notifications Notification[]
+  savedBy       SavedMessage[]
+  poll          Poll?
 
   @@index([conversationId, createdAt])
+}
+
+model SavedMessage {
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messageId String
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, messageId])
+  @@index([userId, createdAt])
+}
+
+/// A custom section ("folder") in one person's chat list.
+model ChatSection {
+  id        String               @id @default(cuid())
+  userId    String
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  position  Int                  @default(0)
+  createdAt DateTime             @default(now())
+  members   ConversationMember[]
+
+  @@index([userId])
+}
+
+/// Held until `sendAt`, then posted as a normal message by the scheduler.
+model ScheduledMessage {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  authorId       String
+  author         User         @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  body           String
+  parentId       String?
+  importance     Importance   @default(normal)
+  attachmentIds  String[]
+  sendAt         DateTime
+  createdAt      DateTime     @default(now())
+
+  @@index([sendAt])
+  @@index([authorId, conversationId])
+}
+
+model Poll {
+  id        String     @id @default(cuid())
+  messageId String     @unique
+  message   Message    @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  question  String
+  options   String[]
+  multiple  Boolean    @default(false)
+  closedAt  DateTime?
+  votes     PollVote[]
+}
+
+model PollVote {
+  pollId    String
+  poll      Poll     @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  option    Int
+  createdAt DateTime @default(now())
+
+  @@id([pollId, userId, option])
 }
 
 model Reaction {

@@ -1,6 +1,9 @@
 import { Prisma } from '@prisma/client';
-import { MessageInfo, PresenceStatus, ReactionSummary, toPlainText, UserSummary } from '@teamsphere/shared';
+import { LinkPreview, MessageInfo, PollInfo, PresenceInfo, ReactionSummary, toPlainText, UserSummary } from '@teamsphere/shared';
 import type { StorageService } from '../infra/storage';
+import { avatarUrl } from '../users/users.mapper';
+
+export { avatarUrl };
 
 export const MESSAGE_INCLUDE = {
   author: { select: { id: true, displayName: true, avatarKey: true } },
@@ -8,16 +11,25 @@ export const MESSAGE_INCLUDE = {
   reactions: { select: { userId: true, emoji: true }, orderBy: { createdAt: 'asc' } },
   attachments: { orderBy: { createdAt: 'asc' } },
   mentions: { select: { userId: true } },
+  poll: { include: { votes: { select: { userId: true, option: true }, orderBy: { createdAt: 'asc' } } } },
 } satisfies Prisma.MessageInclude;
 
 export type MessageRow = Prisma.MessageGetPayload<{ include: typeof MESSAGE_INCLUDE }>;
-
-export const avatarUrl = (u: { id: string; avatarKey: string | null }) => (u.avatarKey ? `/api/users/${u.id}/avatar` : null);
 
 export function summarizeReactions(rows: { userId: string; emoji: string }[]): ReactionSummary[] {
   const byEmoji = new Map<string, string[]>();
   for (const r of rows) byEmoji.set(r.emoji, [...(byEmoji.get(r.emoji) ?? []), r.userId]);
   return [...byEmoji].map(([emoji, userIds]) => ({ emoji, userIds }));
+}
+
+export function toPollInfo(p: NonNullable<MessageRow['poll']>): PollInfo {
+  return {
+    id: p.id,
+    question: p.question,
+    multiple: p.multiple,
+    options: p.options.map((text, i) => ({ text, voterIds: p.votes.filter((v) => v.option === i).map((v) => v.userId) })),
+    closedAt: p.closedAt?.toISOString() ?? null,
+  };
 }
 
 export function toMessageInfo(m: MessageRow, storage: StorageService, clientId?: string): MessageInfo {
@@ -49,6 +61,8 @@ export function toMessageInfo(m: MessageRow, storage: StorageService, clientId?:
           url: `/api/attachments/${a.id}/content?${storage.sign(a.id)}`,
         })),
     mentionIds: deleted ? [] : m.mentions.map((x) => x.userId),
+    poll: m.poll && !deleted ? toPollInfo(m.poll) : null,
+    linkPreview: deleted ? null : ((m.linkPreview as LinkPreview | null) ?? null),
     createdAt: m.createdAt.toISOString(),
     editedAt: m.editedAt?.toISOString() ?? null,
     deletedAt: m.deletedAt?.toISOString() ?? null,
@@ -57,7 +71,15 @@ export function toMessageInfo(m: MessageRow, storage: StorageService, clientId?:
 
 export function toUserSummary(
   u: { id: string; displayName: string; avatarKey: string | null; jobTitle: string | null },
-  presence: PresenceStatus,
+  presence: PresenceInfo | undefined,
 ): UserSummary {
-  return { id: u.id, displayName: u.displayName, avatarUrl: avatarUrl(u), jobTitle: u.jobTitle, presence };
+  return {
+    id: u.id,
+    displayName: u.displayName,
+    avatarUrl: avatarUrl(u),
+    jobTitle: u.jobTitle,
+    presence: presence?.status ?? 'offline',
+    statusMessage: presence?.statusMessage ?? null,
+    outOfOffice: presence?.outOfOffice ?? null,
+  };
 }

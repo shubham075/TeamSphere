@@ -12,24 +12,48 @@ interface PresenceFields {
   presenceExpiresAt: Date | null;
   statusMessage: string | null;
   statusExpiresAt: Date | null;
+  oooEnabled: boolean;
+  oooMessage: string | null;
+  oooStartAt: Date | null;
+  oooEndAt: Date | null;
 }
 
-/** A manual status wins while it hasn't expired; otherwise online → available, no connections → offline. */
+export function isOutOfOffice(u: Pick<PresenceFields, 'oooEnabled' | 'oooStartAt' | 'oooEndAt'>, now = new Date()) {
+  return u.oooEnabled && (!u.oooStartAt || u.oooStartAt <= now) && (!u.oooEndAt || u.oooEndAt > now);
+}
+
+/**
+ * A manual status wins while it hasn't expired; otherwise online → available, no connections → offline.
+ * Out of office shows over everything except "Appear offline", so colleagues see it even when the person is online.
+ */
 export function computePresence(u: PresenceFields, online: boolean, now = new Date()): PresenceInfo {
   const manual = u.presenceStatus && (!u.presenceExpiresAt || u.presenceExpiresAt > now) ? u.presenceStatus : null;
   const message = u.statusMessage && (!u.statusExpiresAt || u.statusExpiresAt > now) ? u.statusMessage : null;
+  const ooo = isOutOfOffice(u, now);
   let status: PresenceStatus = online ? 'available' : 'offline';
   if (manual && online) status = manual as PresenceStatus;
   else if (manual === 'offline') status = 'offline';
-  return { userId: u.id, status, statusMessage: message };
+  if (ooo && manual !== 'offline') status = 'ooo';
+  return {
+    userId: u.id,
+    status,
+    statusMessage: message,
+    statusExpiresAt: message ? (u.statusExpiresAt?.toISOString() ?? null) : null,
+    presenceExpiresAt: manual ? (u.presenceExpiresAt?.toISOString() ?? null) : null,
+    outOfOffice: ooo ? { message: u.oooMessage, until: u.oooEndAt?.toISOString() ?? null } : null,
+  };
 }
 
-const PRESENCE_SELECT = {
+export const PRESENCE_SELECT = {
   id: true,
   presenceStatus: true,
   presenceExpiresAt: true,
   statusMessage: true,
   statusExpiresAt: true,
+  oooEnabled: true,
+  oooMessage: true,
+  oooStartAt: true,
+  oooEndAt: true,
 } as const;
 
 /**
@@ -86,7 +110,16 @@ export class PresenceService implements OnModuleInit {
   }
 
   async get(userId: string): Promise<PresenceInfo> {
-    return (await this.getMany([userId])).get(userId) ?? { userId, status: 'offline', statusMessage: null };
+    return (
+      (await this.getMany([userId])).get(userId) ?? {
+        userId,
+        status: 'offline',
+        statusMessage: null,
+        statusExpiresAt: null,
+        presenceExpiresAt: null,
+        outOfOffice: null,
+      }
+    );
   }
 
   async broadcast(userId: string) {

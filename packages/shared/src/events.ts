@@ -7,6 +7,11 @@ export const WS_EVENTS = {
   reactionChanged: 'reaction:changed',
   typing: 'typing',
   readUpdated: 'read:updated',
+  /** Repeated every 2 minutes for 20 minutes to recipients who haven't read an urgent message. */
+  messageUrgentReminder: 'message:urgent_reminder',
+  scheduledUpdated: 'scheduled:updated',
+  sectionsUpdated: 'sections:updated',
+  savedUpdated: 'saved:updated',
   callIncoming: 'call:incoming',
   callAccepted: 'call:accepted',
   callDeclined: 'call:declined',

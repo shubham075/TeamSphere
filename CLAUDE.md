@@ -8,7 +8,8 @@ a Windows desktop app. Own branding only: never use Microsoft names, logos or as
 1. **[SOURCE_OF_TRUTH.md](SOURCE_OF_TRUTH.md)** is the spec: scope (§3), architecture (§6), data model (§7),
    phases (§9), decisions (§12), change log (§14). Record every scope or design change there first.
 2. **[README.md](README.md)** has the roadmap table (what's done / next) and the setup steps.
-3. Pick up the **first unfinished item** in the roadmap (currently: the remaining Phase 1 items, then Phase 2).
+3. Pick up the **first unfinished item** in the roadmap (currently: Phase 2; Phases 2, 3 and 6 were started on
+   parallel branches `claude/phase2-teams-*`, `claude/phase3-calling-*`, `claude/phase6-files-*`, so check those first).
 4. When you finish an item: update the README roadmap, SOURCE_OF_TRUTH §9 + §14, run checks, then commit and push.
 
 ## Product decisions (don't re-ask)

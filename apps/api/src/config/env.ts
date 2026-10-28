@@ -41,6 +41,13 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .default('true')
     .transform((v) => v === 'true'),
+
+  LINK_PREVIEWS_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+  /** Allow previews of intranet links (private IP ranges). Off by default so chat links can't probe internal services. */
+  LINK_PREVIEW_ALLOW_PRIVATE: bool,
 });
 
 export type Env = z.infer<typeof envSchema>;

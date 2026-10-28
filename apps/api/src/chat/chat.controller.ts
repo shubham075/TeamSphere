@@ -10,9 +10,11 @@ import { tmpdir } from 'node:os';
 import { diskStorage } from 'multer';
 import { z } from 'zod';
 import {
-  AddMembersInput, addMembersSchema, CreateConversationInput, createConversationSchema, EditMessageInput,
-  editMessageSchema, MAX_ATTACHMENT_BYTES, MemberSettingsInput, memberSettingsSchema, sendMessageSchema,
-  UpdateConversationInput, updateConversationSchema,
+  AddMembersInput, addMembersSchema, ChatSectionInput, chatSectionSchema, CreateConversationInput,
+  createConversationSchema, EditMessageInput, editMessageSchema, MarkUnreadInput, markUnreadSchema,
+  MAX_ATTACHMENT_BYTES, MemberSettingsInput, memberSettingsSchema, ReorderSectionsInput, reorderSectionsSchema,
+  scheduleMessageSchema, sendMessageSchema, UpdateConversationInput, updateConversationSchema, VotePollInput,
+  votePollSchema,
 } from '@teamsphere/shared';
 import { AuthUser, CurrentUser, Public } from '../common/auth.decorators';
 import { ZodPipe } from '../common/zod.pipe';
@@ -21,6 +23,7 @@ import { StorageService } from '../infra/storage';
 import { ChatService } from './chat.service';
 
 type SendBody = z.output<typeof sendMessageSchema>;
+type ScheduleBody = z.output<typeof scheduleMessageSchema>;
 
 @Controller('conversations')
 export class ConversationsController {
@@ -70,6 +73,11 @@ export class ConversationsController {
     return this.chat.markRead(me.id, id);
   }
 
+  @Post(':id/unread')
+  unread(@CurrentUser() me: AuthUser, @Param('id') id: string, @Body(new ZodPipe(markUnreadSchema)) body: MarkUnreadInput) {
+    return this.chat.markUnread(me.id, id, body.messageId);
+  }
+
   @Get(':id/messages')
   messages(@CurrentUser() me: AuthUser, @Param('id') id: string, @Query('before') before?: string, @Query('limit') limit?: string) {
     return this.chat.messages(me.id, id, before || undefined, Number(limit) || 50);
@@ -78,6 +86,21 @@ export class ConversationsController {
   @Post(':id/messages')
   send(@CurrentUser() me: AuthUser, @Param('id') id: string, @Body(new ZodPipe(sendMessageSchema)) body: SendBody) {
     return this.chat.send(me.id, id, body);
+  }
+
+  @Get(':id/search')
+  search(@CurrentUser() me: AuthUser, @Param('id') id: string, @Query('q') q = '') {
+    return this.chat.search(me.id, id, q.slice(0, 200));
+  }
+
+  @Get(':id/scheduled')
+  scheduled(@CurrentUser() me: AuthUser, @Param('id') id: string) {
+    return this.chat.listScheduled(me.id, id);
+  }
+
+  @Post(':id/scheduled')
+  schedule(@CurrentUser() me: AuthUser, @Param('id') id: string, @Body(new ZodPipe(scheduleMessageSchema)) body: ScheduleBody) {
+    return this.chat.schedule(me.id, id, body);
   }
 
   @Post(':id/attachments')
@@ -123,6 +146,87 @@ export class MessagesController {
   @Delete(':id/reactions/:emoji')
   unreact(@CurrentUser() me: AuthUser, @Param('id') id: string, @Param('emoji') emoji: string) {
     return this.chat.react(me.id, id, emoji, false);
+  }
+
+  @Put(':id/saved')
+  save(@CurrentUser() me: AuthUser, @Param('id') id: string) {
+    return this.chat.setSaved(me.id, id, true);
+  }
+
+  @Delete(':id/saved')
+  unsave(@CurrentUser() me: AuthUser, @Param('id') id: string) {
+    return this.chat.setSaved(me.id, id, false);
+  }
+
+  @Put(':id/poll/vote')
+  vote(@CurrentUser() me: AuthUser, @Param('id') id: string, @Body(new ZodPipe(votePollSchema)) body: VotePollInput) {
+    return this.chat.vote(me.id, id, body.options);
+  }
+
+  @Post(':id/poll/close')
+  closePoll(@CurrentUser() me: AuthUser, @Param('id') id: string) {
+    return this.chat.closePoll(me.id, id);
+  }
+}
+
+@Controller('saved')
+export class SavedController {
+  constructor(private readonly chat: ChatService) {}
+
+  @Get()
+  list(@CurrentUser() me: AuthUser) {
+    return this.chat.listSaved(me.id);
+  }
+}
+
+@Controller('chat-sections')
+export class SectionsController {
+  constructor(private readonly chat: ChatService) {}
+
+  @Get()
+  list(@CurrentUser() me: AuthUser) {
+    return this.chat.listSections(me.id);
+  }
+
+  @Post()
+  create(@CurrentUser() me: AuthUser, @Body(new ZodPipe(chatSectionSchema)) body: ChatSectionInput) {
+    return this.chat.createSection(me.id, body.name);
+  }
+
+  @Put('order')
+  reorder(@CurrentUser() me: AuthUser, @Body(new ZodPipe(reorderSectionsSchema)) body: ReorderSectionsInput) {
+    return this.chat.reorderSections(me.id, body.ids);
+  }
+
+  @Patch(':id')
+  rename(@CurrentUser() me: AuthUser, @Param('id') id: string, @Body(new ZodPipe(chatSectionSchema)) body: ChatSectionInput) {
+    return this.chat.renameSection(me.id, id, body.name);
+  }
+
+  @Delete(':id')
+  remove(@CurrentUser() me: AuthUser, @Param('id') id: string) {
+    return this.chat.deleteSection(me.id, id);
+  }
+}
+
+@Controller('scheduled')
+export class ScheduledController {
+  constructor(private readonly chat: ChatService) {}
+
+  @Get()
+  list(@CurrentUser() me: AuthUser) {
+    return this.chat.listScheduled(me.id);
+  }
+
+  @Delete(':id')
+  @HttpCode(204)
+  cancel(@CurrentUser() me: AuthUser, @Param('id') id: string) {
+    return this.chat.cancelScheduled(me.id, id);
+  }
+
+  @Post(':id/send')
+  sendNow(@CurrentUser() me: AuthUser, @Param('id') id: string) {
+    return this.chat.sendScheduledNow(me.id, id);
   }
 }
 
