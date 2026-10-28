@@ -4,14 +4,50 @@
     {
       "name": "api",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--dir", "apps/api", "dev"],
+      "runtimeArgs": [
+        "--dir",
+        "apps/api",
+        "dev"
+      ],
       "port": 4600
     },
     {
       "name": "web",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--dir", "apps/web", "dev"],
+      "runtimeArgs": [
+        "--dir",
+        "apps/web",
+        "dev"
+      ],
       "port": 3000
+    },
+    {
+      "name": "api-calls",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--dir",
+        "apps/api",
+        "dev"
+      ],
+      "port": 4610
+    },
+    {
+      "name": "web-calls",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--dir",
+        "apps/web",
+        "exec",
+        "next",
+        "dev",
+        "--port",
+        "3110"
+      ],
+      "port": 3110,
+      "env": {
+        "API_URL": "http://127.0.0.1:4610",
+        "NEXT_PUBLIC_SOCKET_PORT": "4610"
+      }
     }
   ]
 }

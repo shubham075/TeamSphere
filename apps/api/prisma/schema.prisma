@@ -61,6 +61,18 @@ model User {
   attachments         Attachment[]
   notifications       Notification[]       @relation("NotificationUser")
   actedNotifications  Notification[]       @relation("NotificationActor")
+
+  callsStarted       Call[]            @relation("CallStarter")
+  callsTransferred   Call[]            @relation("CallTransferrer")
+  callParticipations CallParticipant[] @relation("CallParticipantUser")
+  callForwardsFor    CallParticipant[] @relation("CallForwardedFor")
+  voicemails         Voicemail[]       @relation("VoicemailRecipient")
+  voicemailsLeft     Voicemail[]       @relation("VoicemailSender")
+  callSettings       CallSettings?     @relation("CallSettingsOwner")
+  callForwardTargets CallSettings[]    @relation("CallForwardTo")
+  callAlsoRingFor    CallSettings[]    @relation("CallAlsoRing")
+  speedDials         SpeedDial[]       @relation("SpeedDialOwner")
+  speedDialedBy      SpeedDial[]       @relation("SpeedDialContact")
 }
 
 /// A directory sign-in linked to a user. One person can have both an AD and an Entra identity (hybrid AD).
@@ -141,6 +153,7 @@ model Conversation {
   messages      Message[]
   attachments   Attachment[]
   notifications Notification[]
+  calls         Call[]
 
   @@index([lastMessageAt])
 }
@@ -245,4 +258,125 @@ model Notification {
   createdAt      DateTime      @default(now())
 
   @@index([userId, createdAt])
+}
+
+// ---------------------------------------------------------------- Phase 3: calls
+
+enum CallKind {
+  audio
+  video
+}
+
+enum CallStatus {
+  ringing
+  active
+  ended
+  missed
+  declined
+}
+
+enum CallParticipantStatus {
+  ringing
+  joined
+  left
+  declined
+  missed
+  busy
+  forwarded
+}
+
+enum ForwardMode {
+  off
+  user
+  voicemail
+}
+
+/// One call = one LiveKit room. Started from a direct or group chat (meetings come in Phase 5).
+model Call {
+  id                String        @id @default(cuid())
+  conversationId    String?
+  conversation      Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  kind              CallKind
+  status            CallStatus    @default(ringing)
+  /// hangup | no_answer | declined | busy | dnd | voicemail | transferred | cancelled
+  endReason         String?
+  roomName          String        @unique
+  startedById       String
+  startedBy         User          @relation("CallStarter", fields: [startedById], references: [id], onDelete: Cascade)
+  /// Set on the new call created by a blind transfer.
+  transferredById   String?
+  transferredBy     User?         @relation("CallTransferrer", fields: [transferredById], references: [id], onDelete: SetNull)
+  transferredFromId String?
+  createdAt         DateTime      @default(now())
+  /// First time someone other than the caller joined; call duration counts from here.
+  answeredAt        DateTime?
+  endedAt           DateTime?
+
+  participants CallParticipant[]
+  voicemails   Voicemail[]
+
+  @@index([status])
+  @@index([conversationId, createdAt])
+}
+
+model CallParticipant {
+  callId          String
+  call            Call                  @relation(fields: [callId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User                  @relation("CallParticipantUser", fields: [userId], references: [id], onDelete: Cascade)
+  status          CallParticipantStatus
+  isCaller        Boolean               @default(false)
+  onHold          Boolean               @default(false)
+  /// Ringing on behalf of this user (call forwarding / simultaneous ring).
+  forwardedForId  String?
+  forwardedFor    User?                 @relation("CallForwardedFor", fields: [forwardedForId], references: [id], onDelete: SetNull)
+  /// Start of the current ring; ringing older than RING_TIMEOUT_MS becomes missed.
+  invitedAt       DateTime              @default(now())
+  joinedAt        DateTime?
+  leftAt          DateTime?
+
+  @@id([callId, userId])
+  @@index([userId, invitedAt])
+  @@index([status, invitedAt])
+}
+
+/// Internal voicemail: audio recorded by a caller whose call was missed.
+model Voicemail {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation("VoicemailRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  fromUserId String?
+  fromUser   User?     @relation("VoicemailSender", fields: [fromUserId], references: [id], onDelete: SetNull)
+  callId     String?
+  call       Call?     @relation(fields: [callId], references: [id], onDelete: SetNull)
+  storageKey String    @unique
+  mimeType   String
+  size       Int
+  durationMs Int
+  listenedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, createdAt])
+}
+
+/// Per-user call forwarding / simultaneous ring. No row = ring normally.
+model CallSettings {
+  userId      String      @id
+  user        User        @relation("CallSettingsOwner", fields: [userId], references: [id], onDelete: Cascade)
+  forwardMode ForwardMode @default(off)
+  forwardToId String?
+  forwardTo   User?       @relation("CallForwardTo", fields: [forwardToId], references: [id], onDelete: SetNull)
+  alsoRingId  String?
+  alsoRing    User?       @relation("CallAlsoRing", fields: [alsoRingId], references: [id], onDelete: SetNull)
+  updatedAt   DateTime    @updatedAt
+}
+
+model SpeedDial {
+  userId    String
+  user      User     @relation("SpeedDialOwner", fields: [userId], references: [id], onDelete: Cascade)
+  contactId String
+  contact   User     @relation("SpeedDialContact", fields: [contactId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, contactId])
 }

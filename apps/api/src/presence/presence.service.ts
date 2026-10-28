@@ -5,6 +5,8 @@ import { RedisService } from '../infra/redis';
 import { RealtimeService } from '../realtime/realtime.service';
 
 const connKey = (userId: string) => `presence:conns:${userId}`;
+/** Set while the user is connected to a call (value: call id). Maintained by CallsService. */
+const inCallKey = (userId: string) => `presence:incall:${userId}`;
 
 interface PresenceFields {
   id: string;
@@ -14,13 +16,17 @@ interface PresenceFields {
   statusExpiresAt: Date | null;
 }
 
-/** A manual status wins while it hasn't expired; otherwise online → available, no connections → offline. */
-export function computePresence(u: PresenceFields, online: boolean, now = new Date()): PresenceInfo {
+/**
+ * A manual status wins while it hasn't expired; otherwise online → available, no connections → offline.
+ * Being in a call shows "In a call" over everything except Do not disturb and Appear offline.
+ */
+export function computePresence(u: PresenceFields, online: boolean, now = new Date(), inCall = false): PresenceInfo {
   const manual = u.presenceStatus && (!u.presenceExpiresAt || u.presenceExpiresAt > now) ? u.presenceStatus : null;
   const message = u.statusMessage && (!u.statusExpiresAt || u.statusExpiresAt > now) ? u.statusMessage : null;
   let status: PresenceStatus = online ? 'available' : 'offline';
   if (manual && online) status = manual as PresenceStatus;
   else if (manual === 'offline') status = 'offline';
+  if (inCall && status !== 'dnd' && status !== 'offline') status = 'in_call';
   return { userId: u.id, status, statusMessage: message };
 }
 
@@ -47,14 +53,16 @@ export class PresenceService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    // Connections from a previous run are gone; clear their counters.
+    // Connections from a previous run are gone; clear their counters. (CallsService restores in-call flags.)
     try {
-      let cursor = '0';
-      do {
-        const [next, keys] = await this.redis.scan(cursor, 'MATCH', 'presence:conns:*', 'COUNT', 500);
-        cursor = next;
-        if (keys.length) await this.redis.del(...keys);
-      } while (cursor !== '0');
+      for (const pattern of ['presence:conns:*', 'presence:incall:*']) {
+        let cursor = '0';
+        do {
+          const [next, keys] = await this.redis.scan(cursor, 'MATCH', pattern, 'COUNT', 500);
+          cursor = next;
+          if (keys.length) await this.redis.del(...keys);
+        } while (cursor !== '0');
+      }
     } catch (e) {
       this.logger.error(`Could not reset presence counters: ${e}`);
     }
@@ -76,17 +84,36 @@ export class PresenceService implements OnModuleInit {
     const ids = [...new Set(userIds)];
     const result = new Map<string, PresenceInfo>();
     if (!ids.length) return result;
-    const [users, counts] = await Promise.all([
+    const [users, counts, calls] = await Promise.all([
       this.prisma.user.findMany({ where: { id: { in: ids } }, select: PRESENCE_SELECT }),
       this.redis.mget(ids.map(connKey)),
+      this.redis.mget(ids.map(inCallKey)),
     ]);
     const online = new Set(ids.filter((_, i) => Number(counts[i] ?? 0) > 0));
-    for (const u of users) result.set(u.id, computePresence(u, online.has(u.id)));
+    const inCall = new Set(ids.filter((_, i) => !!calls[i]));
+    for (const u of users) result.set(u.id, computePresence(u, online.has(u.id), new Date(), inCall.has(u.id)));
     return result;
   }
 
   async get(userId: string): Promise<PresenceInfo> {
     return (await this.getMany([userId])).get(userId) ?? { userId, status: 'offline', statusMessage: null };
+  }
+
+  async isInCall(userId: string) {
+    return !!(await this.redis.get(inCallKey(userId)));
+  }
+
+  /** Marks the user as in a call (or not) and broadcasts the change. */
+  async setInCall(userId: string, callId: string | null) {
+    const was = await this.redis.get(inCallKey(userId));
+    if (callId) await this.redis.set(inCallKey(userId), callId);
+    else await this.redis.del(inCallKey(userId));
+    if (!!was !== !!callId) await this.broadcast(userId);
+  }
+
+  /** Clears "In a call" only if it still refers to this call (the user may already be in the next one, e.g. after a transfer). */
+  async clearInCall(userId: string, callId: string) {
+    if ((await this.redis.get(inCallKey(userId))) === callId) await this.setInCall(userId, null);
   }
 
   async broadcast(userId: string) {

@@ -23,6 +23,13 @@ const envSchema = z.object({
   S3_SECRET_KEY: z.string().min(1),
   S3_BUCKET: z.string().default('teamsphere'),
 
+  /** LiveKit server API (ws:// or http://), as reached from the API server. */
+  LIVEKIT_URL: z.string().default('ws://127.0.0.1:7880'),
+  /** LiveKit URL handed to browsers/desktop clients; defaults to LIVEKIT_URL (fine when both run on one host). */
+  LIVEKIT_PUBLIC_URL: z.string().optional(),
+  LIVEKIT_API_KEY: z.string().min(1),
+  LIVEKIT_API_SECRET: z.string().min(32),
+
   ENTRA_ENABLED: bool,
   ENTRA_TENANT_ID: z.string().optional(),
   ENTRA_CLIENT_ID: z.string().optional(),

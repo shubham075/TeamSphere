@@ -33,7 +33,8 @@ export class UsersController {
   @Get('me')
   async me(@CurrentUser() me: AuthUser): Promise<PublicUser & { presence: PresenceInfo }> {
     const user = await this.prisma.user.findUniqueOrThrow({ where: { id: me.id } });
-    return { ...toPublicUser(user), presence: computePresence(user, true) }; // the caller is online by definition
+    // The caller is online by definition.
+    return { ...toPublicUser(user), presence: computePresence(user, true, new Date(), await this.presence.isInCall(me.id)) };
   }
 
   @Patch('me')

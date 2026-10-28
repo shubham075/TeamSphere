@@ -22,6 +22,8 @@ async function bootstrap() {
   app.set('trust proxy', 1);
   app.use(helmet());
   app.use(cookieParser());
+  // LiveKit webhooks are verified against a hash of the exact bytes sent, so keep them as a raw Buffer.
+  app.useBodyParser('raw', { type: 'application/webhook+json' });
   app.setGlobalPrefix('api');
   app.enableCors({ origin: env.WEB_ORIGIN, credentials: true });
   app.enableShutdownHooks();
