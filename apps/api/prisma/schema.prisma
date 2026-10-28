@@ -40,6 +40,10 @@ model User {
   role         UserRole     @default(user)
   isActive     Boolean      @default(true)
 
+  teamMemberships    TeamMember[]
+  channelMemberships ChannelMember[]
+  tagMemberships     TagMember[]
+
   /// Manually chosen presence; null means automatic (available while connected).
   presenceStatus    String?
   presenceExpiresAt DateTime?
@@ -113,6 +117,8 @@ enum ConversationType {
   direct
   group
   self
+  /// A team channel's posts (Phase 2). Members are synced from the channel's access list by TeamsService.
+  channel
 }
 
 enum MessageType {
@@ -245,4 +251,160 @@ model Notification {
   createdAt      DateTime      @default(now())
 
   @@index([userId, createdAt])
+}
+
+// ---------------------------------------------------------------- Phase 2: teams & channels
+// Channel posts reuse Conversation/Message (Conversation.type = channel; Message.parentId = thread root).
+// Channel.conversationId and ChannelPost.messageId are plain ids (no Prisma relation) so the chat models stay untouched.
+
+enum TeamVisibility {
+  public
+  private
+  orgwide
+}
+
+enum TeamRole {
+  owner
+  member
+  guest
+}
+
+enum ChannelType {
+  standard
+  private
+  shared
+}
+
+model Team {
+  id          String         @id @default(cuid())
+  name        String
+  description String?
+  visibility  TeamVisibility @default(private)
+  /// Code anyone can use to join (owners generate or reset it); null when disabled.
+  joinCode    String?        @unique
+  /// TeamSettings DTO (member/guest permissions, @team/@channel mentions).
+  settings    Json           @default("{}")
+  createdById String?
+  archivedAt  DateTime?
+  /// Soft delete: restorable for 30 days, then purged.
+  deletedAt   DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  members        TeamMember[]
+  channels       Channel[]
+  tags           Tag[]
+  sharedChannels ChannelShare[]
+
+  @@index([visibility])
+}
+
+model TeamMember {
+  teamId   String
+  team     Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role     TeamRole @default(member)
+  joinedAt DateTime @default(now())
+  /// Personal order in the teams list (ascending) and visibility.
+  position Int      @default(0)
+  hidden   Boolean  @default(false)
+
+  @@id([teamId, userId])
+  @@index([userId])
+}
+
+model Channel {
+  id             String      @id @default(cuid())
+  teamId         String
+  team           Team        @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  name           String
+  description    String?
+  type           ChannelType @default(standard)
+  /// Every team has exactly one General channel; it can't be renamed, archived or deleted.
+  isGeneral      Boolean     @default(false)
+  conversationId String      @unique
+  /// ChannelModeration DTO.
+  moderation     Json        @default("{}")
+  /// Notes tab: a co-owned markdown page. `notesVersion` guards against overwriting someone else's edit.
+  notes          String      @default("")
+  notesVersion   Int         @default(0)
+  notesUpdatedAt DateTime?
+  notesUpdatedBy String?
+  createdById    String?
+  archivedAt     DateTime?
+  deletedAt      DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  members ChannelMember[]
+  shares  ChannelShare[]
+  posts   ChannelPost[]
+
+  @@index([teamId])
+}
+
+/// Explicit members of private and shared channels (standard channels include the whole team).
+model ChannelMember {
+  channelId String
+  channel   Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// owner | member
+  role      String   @default("member")
+  addedAt   DateTime @default(now())
+
+  @@id([channelId, userId])
+  @@index([userId])
+}
+
+/// A shared channel made available to every member of another team.
+model ChannelShare {
+  channelId String
+  channel   Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([channelId, teamId])
+  @@index([teamId])
+}
+
+/// Extra data for a channel's top-level post (the thread root message).
+model ChannelPost {
+  messageId          String   @id
+  channelId          String
+  channel            Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  subject            String?
+  announcement       Boolean  @default(false)
+  /// Attachment shown as the announcement banner (excluded from the post's file list).
+  headerAttachmentId String?
+  /// Same id on every copy of a cross-posted message.
+  crossPostId        String?
+  createdAt          DateTime @default(now())
+
+  @@index([channelId])
+  @@index([crossPostId])
+}
+
+/// Named group of team members that can be @mentioned together.
+model Tag {
+  id        String      @id @default(cuid())
+  teamId    String
+  team      Team        @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  name      String
+  createdAt DateTime    @default(now())
+  members   TagMember[]
+
+  @@unique([teamId, name])
+}
+
+model TagMember {
+  tagId  String
+  tag    Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([tagId, userId])
+  @@index([userId])
 }

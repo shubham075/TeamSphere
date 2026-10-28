@@ -11,6 +11,7 @@ import { StorageModule } from './infra/storage';
 import { RealtimeCoreModule } from './realtime/realtime.service';
 import { PresenceModule } from './presence/presence.module';
 import { ChatModule } from './chat/chat.module';
+import { TeamsModule } from './teams/teams.module';
 import { AccessTokenGuard, RolesGuard } from './common/guards';
 import { Public } from './common/auth.decorators';
 
@@ -39,6 +40,7 @@ class HealthController {
     PresenceModule,
     UsersModule,
     ChatModule,
+    TeamsModule,
   ],
   controllers: [HealthController],
   providers: [

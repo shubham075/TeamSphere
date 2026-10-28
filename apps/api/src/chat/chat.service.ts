@@ -32,7 +32,8 @@ export class ChatService {
 
   async list(me: string): Promise<ConversationInfo[]> {
     const rows = await this.prisma.conversation.findMany({
-      where: { members: { some: { userId: me } } },
+      // Channel conversations belong to Teams (Phase 2) and are listed there.
+      where: { members: { some: { userId: me } }, type: { not: 'channel' } },
       include: CONVERSATION_INCLUDE,
       orderBy: { lastMessageAt: 'desc' },
       take: 200,
@@ -160,6 +161,8 @@ export class ChatService {
 
   async send(me: string, id: string, input: SendMessageInput & { importance: 'normal' | 'important' | 'urgent'; attachmentIds: string[] }): Promise<MessageInfo> {
     const conversation = await this.requireMembership(me, id);
+    // Channel posts go through ChannelPostsService, which applies moderation and threading.
+    if (conversation.type === 'channel') throw new BadRequestException('Post in the channel instead');
     const memberIds = conversation.members.map((m) => m.userId);
     const body = (input.body ?? '').trim();
 
