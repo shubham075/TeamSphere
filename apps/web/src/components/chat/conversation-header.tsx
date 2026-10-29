@@ -12,6 +12,7 @@ import { api } from '@/lib/api';
 import { conversationTitle, otherMember, removeConversation, upsertConversation, useMemberSettings } from '@/lib/chat';
 import { usePresence } from '@/lib/chat-store';
 import { useDismiss } from '@/lib/use-dismiss';
+import { useCallStore } from '@/lib/call-store';
 import { ConversationAvatar } from './conversation-avatar';
 import { AddPeopleDialog } from './add-people-dialog';
 import { NewChatDialog } from './new-chat-dialog';
@@ -27,6 +28,9 @@ export function ConversationHeader({ conversation: c, meId }: { conversation: Co
   const [renaming, setRenaming] = useState(false);
   const [title, setTitle] = useState(c.title ?? '');
   const menuRef = useRef<HTMLDivElement>(null);
+  const running = useCallStore((s) => s.running[c.id]);
+  const inThisCall = useCallStore((s) => !!running && s.call?.id === running.id);
+  const startCall = useCallStore((s) => s.start);
   useDismiss(menuRef, menu !== 'none', () => setMenu('none'));
 
   const rename = useMutation({
@@ -76,13 +80,25 @@ export function ConversationHeader({ conversation: c, meId }: { conversation: Co
       </div>
 
       <div ref={menuRef} className="relative flex items-center gap-1">
-        {/* Calling arrives in Phase 3. */}
-        <button disabled title="Video call (coming soon)" aria-label="Video call" className="rounded p-2 text-muted opacity-50">
-          <Video size={18} />
-        </button>
-        <button disabled title="Audio call (coming soon)" aria-label="Audio call" className="rounded p-2 text-muted opacity-50">
-          <Phone size={18} />
-        </button>
+        {c.type !== 'self' &&
+          (running ? (
+            <button
+              onClick={() => void useCallStore.getState().accept(running.id)}
+              disabled={inThisCall}
+              className="mr-1 flex items-center gap-1.5 rounded-md bg-success px-3 py-1.5 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-60"
+            >
+              <Phone size={15} /> {inThisCall ? 'In call' : 'Join'}
+            </button>
+          ) : (
+            <>
+              <button onClick={() => void startCall({ conversationId: c.id, kind: 'video' })} title="Video call" aria-label="Video call" className="rounded p-2 hover:bg-surface-hover">
+                <Video size={18} />
+              </button>
+              <button onClick={() => void startCall({ conversationId: c.id, kind: 'audio' })} title="Audio call" aria-label="Audio call" className="rounded p-2 hover:bg-surface-hover">
+                <Phone size={18} />
+              </button>
+            </>
+          ))}
         {c.type === 'group' && (
           <button
             onClick={() => setMenu(menu === 'people' ? 'none' : 'people')}

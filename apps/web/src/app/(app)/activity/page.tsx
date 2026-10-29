@@ -2,7 +2,7 @@
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { AtSign, CheckCheck, CornerUpLeft, SmilePlus } from 'lucide-react';
+import { AtSign, CheckCheck, CornerUpLeft, PhoneMissed, SmilePlus, Voicemail } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import type { ActivityItem } from '@teamsphere/shared';
@@ -14,6 +14,8 @@ const TYPE_INFO: Record<ActivityItem['type'], { icon: typeof AtSign; verb: strin
   mention: { icon: AtSign, verb: 'mentioned you' },
   reply: { icon: CornerUpLeft, verb: 'replied to you' },
   reaction: { icon: SmilePlus, verb: 'reacted to your message' },
+  missed_call: { icon: PhoneMissed, verb: 'tried to call you' },
+  voicemail: { icon: Voicemail, verb: 'left you a voicemail' },
 };
 
 export default function ActivityPage() {
@@ -54,7 +56,9 @@ export default function ActivityPage() {
                 <button
                   onClick={() => {
                     if (!a.read) markRead.mutate([a.id]);
-                    if (a.conversationId) router.push(`/chat/${a.conversationId}`);
+                    if (a.type === 'voicemail') router.push('/calls?tab=voicemail');
+                    else if (a.type === 'missed_call') router.push('/calls');
+                    else if (a.conversationId) router.push(`/chat/${a.conversationId}`);
                   }}
                   className={clsx('flex w-full gap-3 rounded-md px-2 py-2.5 text-left hover:bg-surface-hover', !a.read && 'bg-brand-soft/50')}
                 >
@@ -82,7 +86,7 @@ export default function ActivityPage() {
         </ul>
       </aside>
       <section className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted max-md:hidden">
-        Mentions, replies and reactions show up here. Select one to open the chat.
+        Mentions, replies, reactions, missed calls and voicemails show up here. Select one to open the chat.
       </section>
     </>
   );

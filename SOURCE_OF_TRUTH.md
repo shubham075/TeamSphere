@@ -398,7 +398,7 @@ App rail: **Activity, Chat, Teams, Calendar, Calls, Files, Apps (…)**, with pi
 4. LiveKit webhooks (`participant_joined/left`, `room_finished`, `egress_ended`) keep call state, attendance and recordings in sync.
 
 ### Realtime events (Socket.IO)
-`message:new|updated|deleted · reaction:changed · typing:start|stop · read:updated · presence:changed · call:incoming|accepted|declined|ended|participant_joined|participant_left · meeting:lobby|admitted · notification:new · channel:updated · team:updated · conversation:updated`
+`message:new|updated|deleted · reaction:changed · typing:start|stop · read:updated · presence:changed · call:incoming|updated|ended|transferred · voicemail:new · meeting:lobby|admitted · notification:new · channel:updated · team:updated · conversation:updated`
 
 ---
 
@@ -419,9 +419,12 @@ Message(id, conversationId, authorId, parentId?, content(json), plainText (tsvec
         type[text|system|call|card], scheduledFor?, editedAt, deletedAt, createdAt)
 Reaction(messageId, userId, emoji) · Mention(messageId, userId?|tagId?|scope) · SavedMessage(userId, messageId)
 Attachment / FileItem(id, ownerType[user|team|channel], parentId?, name, mime, size, storageKey, version, deletedAt)
-Call(id, conversationId?, meetingId?, kind[audio|video], roomName, startedById, startedAt, endedAt)
-CallParticipant(callId, userId, joinedAt, leftAt, status[ringing|joined|declined|missed])
-Voicemail(id, userId, fromUserId, storageKey, duration, listenedAt)
+Call(id, conversationId?, meetingId?, kind[audio|video], status[ringing|active|ended|missed|declined], endReason, roomName,
+     startedById, transferredById?, transferredFromId?, createdAt, answeredAt, endedAt)
+CallParticipant(callId, userId, status[ringing|joined|left|declined|missed|busy|forwarded], isCaller, onHold, forwardedForId?,
+     invitedAt, joinedAt, leftAt)
+Voicemail(id, userId, fromUserId, callId?, storageKey, mimeType, size, durationMs, listenedAt)
+CallSettings(userId, forwardMode[off|user|voicemail], forwardToId?, alsoRingId?) · SpeedDial(userId, contactId)
 Meeting(id, organizerId, title, description, startAt, endAt, timeZone, recurrence?, joinCode, options(json),
         conversationId, channelId?, kind[meeting|webinar|townhall|appointment])
 MeetingAttendee(meetingId, userId?, email?, role, rsvp) · Recording(id, meetingId, storageKey, expiresAt)
@@ -458,7 +461,7 @@ SOURCE_OF_TRUTH.md
 | **0.5 Windows Desktop shell** ✅ (pulled forward on request) | §3.20 shell: Electron app, setup/offline screens, tray + presence menu, deep links, Windows toasts incl. call toast, screen picker, taskbar badge, idle → Away, pop-outs, global call shortcuts, auto-update, NSIS + MSI | Installer builds; app signs in to the server; native features callable from the web app |
 | **1. Chat & Presence** 🚧 core done | §3.2, §3.3 P0/P1, attachments, Activity, notifications. **Done:** 1:1/group/self chats, realtime delivery (Socket.IO), markdown-lite + @mentions, reply/quote, edit/delete, reactions, typing, read receipts (Seen), unread counts, attachments (S3, signed URLs, image/video preview, drag/paste), delivery options (important/urgent), pin/mute/hide, add/remove/leave/rename with system messages, Activity feed, live presence, desktop/browser notifications, taskbar badge. **Remaining (P1):** scheduled send, saved messages, mark unread, chat folders, polls, voice clips, link previews, pop-out chat, urgent re-notify, in-chat search, avatar upload, status-message expiry UI, out-of-office | Two users chat in real time with all P0 chat features ✅ |
 | **2. Teams & Channels** | §3.4, mentions, tags, unread, wiki tab | Full channel workflow including private/shared channels |
-| **3. Calling** | §3.5 P0/P1: LiveKit, 1:1 & group A/V, ringing, screen share, hold/transfer/forward, voicemail, call history | 6 users in a group video call with screen share |
+| **3. Calling** ✅ | §3.5 P0/P1: LiveKit, 1:1 & group A/V, ringing, screen share, hold/transfer/forward, voicemail, call history. **Done:** all P0 + P1 except consult transfer (blind transfer only) | 6 users in a group video call with screen share |
 | **4. Windows Desktop (integration)** | Wire the Phase 0.5 shell into chat and calls: unread badge counts, message toasts, incoming-call toast actions, mute/camera shortcuts, mini call window | Incoming call toast accepts a call; badge matches unread count |
 | **5. Meetings & Calendar** | §3.6 P0/P1, §3.8: scheduling, lobby, roles, recording, breakout rooms, whiteboard, polls, attendance | Scheduled meeting with breakout rooms, whiteboard and recording |
 | **6. Files** | §3.9 P1: libraries, versions, sharing, recycle bin | Team document library usable |
@@ -523,7 +526,7 @@ SOURCE_OF_TRUTH.md
 ```
 DATABASE_URL, REDIS_URL, JWT_ACCESS_SECRET, JWT_REFRESH_SECRET, WEB_ORIGIN,
 S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY, S3_BUCKET,
-LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET,
+LIVEKIT_URL, LIVEKIT_PUBLIC_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET,
 ENTRA_ENABLED, ENTRA_TENANT_ID, ENTRA_CLIENT_ID, ENTRA_CLIENT_SECRET, ENTRA_REDIRECT_URI,
 LDAP_ENABLED, LDAP_URL, LDAP_BIND_DN, LDAP_BIND_PASSWORD, LDAP_BASE_DN, LDAP_USER_FILTER,
 SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM
@@ -537,6 +540,7 @@ SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM
 | 2026-10-27 | 0.1 | Initial draft |
 | 2026-10-27 | 0.2 | Internal tool; Next.js + NestJS; self-hosted LiveKit; recording, captions, breakout rooms, whiteboard in scope |
 | 2026-10-27 | 0.3 | Added Electron desktop app |
+| 2026-10-28 | 0.8 | Phase 3 calling built: `Call`/`CallParticipant`/`Voicemail`/`CallSettings`/`SpeedDial` models; `calls` module (pure state machine in `call-state.ts`, LiveKit tokens, 30 s ring sweep, LiveKit webhook at `POST /api/calls/livekit-webhook` + 20 s room reconcile as a fallback for closed tabs); events simplified to `call:incoming|updated|ended|transferred` + `voicemail:new`; missed calls/voicemails added to Activity; presence `in_call` kept in Redis; blind transfer only (consult transfer deferred); added `LIVEKIT_PUBLIC_URL`. Single API instance assumed for call locks (like presence) |
 | 2026-10-28 | 0.7 | Phase 1 core chat & presence built: Conversation/ConversationMember/Message/Reaction/Mention/Attachment/Notification models; Socket.IO gateway (token auth, per-user rooms, Redis connection counts for presence); chat REST API; chat UI, Activity page, rail badges. Message `content` is stored as markdown-lite `body` text with inline mention tokens (JSON cards later). Web retries token refresh during server restarts instead of signing out |
 | 2026-10-28 | 0.6 | Desktop shell (Phase 0.5) built in `apps/desktop`: Electron 44, NSIS + MSI, tray/status menu, call toasts with protocol actions, screen picker, taskbar badge, deep links, idle → Away, pop-outs, auto-update from `<server>/desktop/`, server setup/offline screens, `server.json` for IT pre-configuration. API dev port moved 4000 → 4600 (clash with another local app) |
 | 2026-10-27 | 0.5 | Phase 0 built: monorepo, Docker infra, Prisma schema (User, UserIdentity, Session, AuditLog), auth (local + Entra OIDC/PKCE + AD LDAP), sessions, profile, presence, app shell, settings. MinIO → SeaweedFS; Turborepo dropped; dev URLs use 127.0.0.1 |

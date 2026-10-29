@@ -8,6 +8,7 @@ import {
   WS_EVENTS,
 } from '@teamsphere/shared';
 import { api } from '@/lib/api';
+import { bindCallEvents } from '@/lib/call-store';
 import { useAuth } from '@/lib/auth-store';
 import {
   conversationTitle, patchConversation, qk, removeConversation, setReactions, upsertConversation, upsertMessage,
@@ -122,6 +123,8 @@ export function RealtimeProvider() {
     socket.on(WS_EVENTS.notificationNew, (n: ActivityItem) => {
       qc.setQueryData<ActivityItem[]>(qk.activity, (list) => (list ? [n, ...list.filter((x) => x.id !== n.id)] : list));
     });
+
+    bindCallEvents(socket, qc);
 
     const prune = setInterval(pruneTyping, 1000);
     return () => {

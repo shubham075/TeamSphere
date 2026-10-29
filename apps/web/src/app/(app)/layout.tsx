@@ -2,6 +2,7 @@
 
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect } from 'react';
+import { CallManager } from '@/components/calls/call-manager';
 import { DesktopIntegration } from '@/components/desktop-integration';
 import { RealtimeProvider } from '@/components/realtime-provider';
 import { AppRail } from '@/components/shell/app-rail';
@@ -30,6 +31,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     <div className="flex h-full flex-col">
       <DesktopIntegration />
       <RealtimeProvider />
+      <CallManager />
       <TitleBar />
       <div className="flex min-h-0 flex-1">
         <AppRail />

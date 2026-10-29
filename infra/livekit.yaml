@@ -13,3 +13,9 @@ keys:
   devkey: devsecret_change_me_at_least_32_chars_long
 logging:
   level: info
+# Call state sync (participant joined/left, room finished). The API also reconciles rooms every 20 s,
+# so calls still work if this URL is unreachable. Restart the livekit container after changing it.
+webhook:
+  api_key: devkey
+  urls:
+    - http://host.docker.internal:4600/api/calls/livekit-webhook
