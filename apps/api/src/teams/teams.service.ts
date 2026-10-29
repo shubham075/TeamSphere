@@ -116,11 +116,11 @@ export class TeamsService implements OnModuleInit, OnModuleDestroy {
     const me = actor.id;
     if (input.visibility === 'orgwide' && actor.role !== 'admin') throw new ForbiddenException('Only admins can create org-wide teams');
 
-    let source: Prisma.TeamGetPayload<{ include: { members: true; channels: true; tags: { include: { members: true } } } }> | null = null;
+    let source: Prisma.TeamGetPayload<{ include: { members: true; channels: { include: { members: true } }; tags: { include: { members: true } } } }> | null = null;
     if (input.copyFrom) {
       source = await this.prisma.team.findFirst({
         where: { id: input.copyFrom.teamId, deletedAt: null, members: { some: { userId: me } } },
-        include: { members: true, channels: { where: { deletedAt: null, archivedAt: null } }, tags: { include: { members: true } } },
+        include: { members: true, channels: { where: { deletedAt: null, archivedAt: null }, include: { members: true } }, tags: { include: { members: true } } },
       });
       if (!source) throw new NotFoundException('The team to copy was not found');
     }
@@ -152,7 +152,14 @@ export class TeamsService implements OnModuleInit, OnModuleDestroy {
 
     if (source && input.copyFrom?.channels) {
       for (const c of source.channels.filter((c) => !c.isGeneral && c.type !== 'shared')) {
-        await this.createChannelRow(team, me, { name: c.name, description: c.description, type: c.type, moderation: c.moderation as Prisma.InputJsonValue });
+        const copy = await this.createChannelRow(team, me, { name: c.name, description: c.description, type: c.type, moderation: c.moderation as Prisma.InputJsonValue });
+        if (c.type === 'private') {
+          // The copier owns each copied private channel; its members come along only when members are copied too.
+          const keep = c.members.filter((m) => m.userId !== me && input.copyFrom?.members && roles.has(m.userId));
+          await this.prisma.channelMember.createMany({
+            data: [{ channelId: copy.id, userId: me, role: 'owner' }, ...keep.map((m) => ({ channelId: copy.id, userId: m.userId, role: m.role }))],
+          });
+        }
       }
     }
     if (source && input.copyFrom?.tags) {
@@ -306,7 +313,7 @@ export class TeamsService implements OnModuleInit, OnModuleDestroy {
       orderBy: [{ role: 'asc' }, { user: { displayName: 'asc' } }],
     });
     const presence = await this.presence.getMany(rows.map((r) => r.userId));
-    return rows.map((r) => ({ user: toUserSummary(r.user, presence.get(r.userId)?.status ?? 'offline'), role: r.role }));
+    return rows.map((r) => ({ user: toUserSummary(r.user, presence.get(r.userId)), role: r.role }));
   }
 
   async addMembers(me: string, teamId: string, userIds: string[], role: TeamRole): Promise<TeamMemberInfo[]> {
@@ -493,7 +500,7 @@ export class TeamsService implements OnModuleInit, OnModuleDestroy {
     const inTeam = new Set(teamMembers.map((m) => m.userId));
     const presence = await this.presence.getMany(ids);
     return users.map((u) => ({
-      user: toUserSummary(u, presence.get(u.id)?.status ?? 'offline'),
+      user: toUserSummary(u, presence.get(u.id)),
       role: roles.get(u.id) ?? 'team',
       external: !inTeam.has(u.id),
     }));

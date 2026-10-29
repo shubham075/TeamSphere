@@ -723,7 +723,7 @@ export class ChatService {
       const visibleLast = last && (!mine?.historySince || last.createdAt >= mine.historySince) ? last : null;
       return {
         id: r.id,
-        type: r.type,
+        type: r.type as ConversationInfo['type'], // channel conversations are excluded from chat lists
         title: r.title,
         members: r.members.map((m) => ({
           user: toUserSummary(m.user, presence.get(m.userId)),

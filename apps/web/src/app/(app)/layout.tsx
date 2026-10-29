@@ -4,6 +4,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 import { DesktopIntegration } from '@/components/desktop-integration';
 import { RealtimeProvider } from '@/components/realtime-provider';
+import { TeamsRealtime } from '@/components/teams/teams-realtime';
 import { AppRail } from '@/components/shell/app-rail';
 import { TitleBar } from '@/components/shell/title-bar';
 import { Logo } from '@/components/logo';
@@ -32,6 +33,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     return (
       <div className="flex h-full flex-col">
         <RealtimeProvider />
+        <TeamsRealtime />
         <main className="flex min-h-0 min-w-0 flex-1">{children}</main>
       </div>
     );
@@ -41,6 +43,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     <div className="flex h-full flex-col">
       <DesktopIntegration />
       <RealtimeProvider />
+      <TeamsRealtime />
       <TitleBar />
       <div className="flex min-h-0 flex-1">
         <AppRail />

@@ -9,7 +9,6 @@ import { ApiError } from '@/lib/api';
 import { formatBytes, uploadAttachment } from '@/lib/chat';
 import { getSocket } from '@/lib/socket';
 import { useChannelMembers, useCreatePost, useCreateReply, useTags, useTeams } from '@/lib/teams';
-import { inputClass } from './ui';
 
 export interface MentionToken {
   name: string;
@@ -415,8 +414,6 @@ export function ChannelComposer({ team, channel, meId, root, onDone, autoFocus }
         </button>
       </div>
       {isPost && announcement && !subject.trim() && <span className="sr-only">Add a headline for the announcement</span>}
-      {/* Hidden helper so the editor of an existing message can reuse the same input styling. */}
-      <span hidden className={inputClass} />
     </div>
   );
 }

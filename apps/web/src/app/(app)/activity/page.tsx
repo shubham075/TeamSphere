@@ -2,22 +2,26 @@
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { AtSign, CheckCheck, CornerUpLeft, SmilePlus } from 'lucide-react';
+import { AtSign, CheckCheck, CornerUpLeft, SmilePlus, UserPlus, Users } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import type { ActivityItem } from '@teamsphere/shared';
 import { Avatar } from '@/components/avatar';
 import { api } from '@/lib/api';
-import { formatListTime, qk, useActivity } from '@/lib/chat';
+import { formatListTime, qk, useActivity, useConversations } from '@/lib/chat';
 
-const TYPE_INFO: Record<ActivityItem['type'], { icon: typeof AtSign; verb: string }> = {
+// Keyed by string: Teams (Phase 2) adds 'team_add' and 'channel_mention'.
+const TYPE_INFO: Record<string, { icon: typeof AtSign; verb: string }> = {
   mention: { icon: AtSign, verb: 'mentioned you' },
   reply: { icon: CornerUpLeft, verb: 'replied to you' },
   reaction: { icon: SmilePlus, verb: 'reacted to your message' },
+  team_add: { icon: UserPlus, verb: 'added you to a team' },
+  channel_mention: { icon: Users, verb: 'mentioned a group you’re in' },
 };
 
 export default function ActivityPage() {
   const { data, isLoading } = useActivity();
+  const { data: chats } = useConversations();
   const qc = useQueryClient();
   const router = useRouter();
   const [unreadOnly, setUnreadOnly] = useState(false);
@@ -54,7 +58,8 @@ export default function ActivityPage() {
                 <button
                   onClick={() => {
                     if (!a.read) markRead.mutate([a.id]);
-                    if (a.conversationId) router.push(`/chat/${a.conversationId}`);
+                    // Conversations that aren't chats are team channels.
+                    if (a.conversationId) router.push(chats?.some((c) => c.id === a.conversationId) ? `/chat/${a.conversationId}` : `/teams?conversation=${a.conversationId}`);
                   }}
                   className={clsx('flex w-full gap-3 rounded-md px-2 py-2.5 text-left hover:bg-surface-hover', !a.read && 'bg-brand-soft/50')}
                 >
