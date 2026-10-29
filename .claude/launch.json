@@ -5,19 +5,13 @@
       "name": "api",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--dir", "apps/api", "dev"],
-      "port": 4600
+      "port": 4000
     },
     {
       "name": "web",
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--dir", "apps/web", "dev"],
-      "port": 3000
-    },
-    {
-      "name": "web-3100",
-      "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--dir", "apps/web", "exec", "next", "dev", "--port", "3100"],
-      "port": 3100
+      "port": 4001
     }
   ]
 }

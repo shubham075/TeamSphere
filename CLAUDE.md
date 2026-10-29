@@ -36,11 +36,11 @@ pnpm infra:up                 # Docker: postgres 5433, redis 6380, seaweedfs s3 
 pnpm build:shared             # required before typechecking api/web after shared changes
 pnpm db:migrate               # prisma migrate dev (apps/api)
 pnpm db:seed                  # dev accounts (see README §3)
-pnpm dev                      # shared watch + api (4600) + web (3000)
+pnpm dev                      # shared watch + api (4000) + web (4001)
 pnpm typecheck                # all packages
 pnpm --filter @teamsphere/api test          # vitest
 pnpm --filter @teamsphere/api user:create -- --username x --name "X" [--role admin]
-pnpm --dir apps/desktop start               # desktop dev against http://localhost:3000
+pnpm --dir apps/desktop start               # desktop dev against http://localhost:4001
 pnpm --dir apps/desktop dist                # Windows installers → apps/desktop/release/
 ```
 
@@ -57,7 +57,7 @@ pnpm --dir apps/desktop dist                # Windows installers → apps/deskto
 ## Gotchas (learned the hard way)
 
 - Use **127.0.0.1**, not `localhost`, for server-side URLs on Windows (Node may resolve `::1`).
-- API dev port is **4600** because port 4000 clashed with another local project.
+- Dev ports: API **4000**, web **4001** (3000 and 4600 clashed with other local projects). Parallel phase stacks use pairs 4002/4003 (calls), 4004/4005 (teams), 4006/4007 (files) with their own DB, Redis index and bucket.
 - Windows PowerShell 5.1 `Set-Content -Encoding utf8` writes a **BOM**, which breaks `.env` parsing. Use bash or the editor.
 - pnpm 12: packages with install scripts must be listed under `allowBuilds` in `pnpm-workspace.yaml`.
 - Stop the API before `prisma generate` on Windows, because the query engine DLL is locked while it runs.

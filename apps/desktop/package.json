@@ -10,7 +10,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "icons": "node scripts/make-icons.mjs",
-    "start": "pnpm build && electron . --server=http://localhost:3000",
+    "start": "pnpm build && electron . --server=http://localhost:4001",
     "dist": "pnpm build && electron-builder --win --x64 --publish never",
     "dist:dir": "pnpm build && electron-builder --win --x64 --dir --publish never"
   },
