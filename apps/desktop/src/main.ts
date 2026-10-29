@@ -4,7 +4,8 @@ import {
 } from 'electron';
 import { join } from 'node:path';
 import type {
-  DesktopNotification, DesktopSettings, IncomingCallToast, ManualPresence, PopOutWindow, SystemIdleState, UpdateStatus,
+  DesktopNotification, DesktopSettings, DesktopWindowState, IncomingCallToast, ManualPresence, PopOutWindow, PresenceStatus,
+  SystemIdleState, UpdateStatus,
 } from '@teamsphere/shared';
 import { loadConfig, normalizeServerUrl, publicSettings, resolveServerUrl, saveConfig } from './config';
 import { DeepLink, findDeepLink, parseDeepLink, registerProtocol } from './deep-links';
@@ -147,6 +148,15 @@ function createMainWindow() {
     }
   });
   wc.on('context-menu', (_e, params) => buildContextMenu(params).popup());
+
+  // The web app opens the always-on-top mini call window while the main window is out of sight during a call.
+  const state = (s: DesktopWindowState) => () => sendMain('ts:window-state', s);
+  mainWindow.on('minimize', state('minimized'));
+  mainWindow.on('hide', state('hidden'));
+  mainWindow.on('restore', state('restored'));
+  mainWindow.on('show', () => {
+    if (!mainWindow?.isMinimized()) sendMain('ts:window-state', 'restored');
+  });
 
   loadApp();
 }
@@ -311,20 +321,48 @@ ipcMain.on('ts:in-call', (e, inCall: boolean) => {
   }
 });
 
+/** Pop-out windows by URL, so opening the same chat (or the mini call window) twice focuses the existing one. */
+const popouts = new Map<string, BrowserWindow>();
+
 ipcMain.on('ts:open-window', (e, w: PopOutWindow) => {
   if (!fromServer(e) || !serverUrl || typeof w?.path !== 'string' || !w.path.startsWith('/')) return;
   const url = new URL(w.path, serverUrl);
   if (url.origin !== serverUrl) return;
+  const key = url.toString();
+  const existing = popouts.get(key);
+  if (existing && !existing.isDestroyed()) {
+    if (w.alwaysOnTop) existing.showInactive();
+    else existing.focus();
+    return;
+  }
+  const width = Math.min(Math.max(w.width ?? 960, 280), 2400);
+  const height = Math.min(Math.max(w.height ?? 720, 160), 1600);
+  // Always-on-top windows (the mini call window) sit in the bottom-right corner and don't steal focus.
+  const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
   const win = new BrowserWindow({
-    width: Math.min(Math.max(w.width ?? 960, 320), 2400),
-    height: Math.min(Math.max(w.height ?? 720, 240), 1600),
+    width,
+    height,
+    ...(w.alwaysOnTop ? { x: area.x + area.width - width - 16, y: area.y + area.height - height - 16 } : {}),
     alwaysOnTop: !!w.alwaysOnTop,
+    minimizable: !w.alwaysOnTop,
+    show: false,
     title: 'TeamSphere',
     icon: ICON,
     autoHideMenuBar: true,
     webPreferences: secureWebPreferences(join(__dirname, 'preload.js')),
   });
-  void win.loadURL(url.toString());
+  popouts.set(key, win);
+  win.on('closed', () => popouts.delete(key));
+  win.once('ready-to-show', () => (w.alwaysOnTop ? win.showInactive() : win.show()));
+  void win.loadURL(key);
+});
+
+ipcMain.on('ts:show-main', (e) => {
+  if (fromServer(e)) showMain();
+});
+
+ipcMain.on('ts:presence-state', (e, status: PresenceStatus) => {
+  if (fromServer(e) && typeof status === 'string') tray?.setPresence(status);
 });
 
 // Report the server actually in use (it may come from --server, the env var or server.json rather than the saved choice).

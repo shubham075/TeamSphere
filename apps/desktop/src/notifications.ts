@@ -1,6 +1,6 @@
 import { Notification } from 'electron';
 import type { DesktopNotification, IncomingCallToast } from '@teamsphere/shared';
-import { PROTOCOL } from './deep-links';
+import { PROTOCOL } from './links';
 
 const xml = (s: string) =>
   s.replace(/[<>&'"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' })[c]!);
@@ -15,7 +15,8 @@ export function showNotification(n: DesktopNotification, onClick: (path?: string
 }
 
 /**
- * Incoming-call toast with Accept / Accept audio / Decline buttons and a looping ringtone.
+ * Incoming-call toast with Accept / Accept audio / Decline buttons. Silent: the web app already plays its ringtone
+ * (on the user's chosen speaker) for as long as the call rings, and two looping sounds would clash.
  * Buttons use protocol activation (teamsphere://call/...), which reaches the running app through
  * the single-instance "second-instance" event — see deep-links.ts.
  */
@@ -38,7 +39,7 @@ export function showIncomingCall(call: IncomingCallToast, onClick: () => void) {
     <action content="${call.video ? 'Audio' : 'Accept'}" arguments="${xml(link(call.video ? 'accept-audio' : 'accept'))}" activationType="protocol"/>
     <action content="Decline" arguments="${xml(link('decline'))}" activationType="protocol"/>
   </actions>
-  <audio src="ms-winsoundevent:Notification.Looping.Call" loop="true"/>
+  <audio silent="true"/>
 </toast>`;
 
   const toast = new Notification({ toastXml });

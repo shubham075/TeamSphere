@@ -8,7 +8,7 @@ import {
   TeamUpdatedEvent, toPlainText, WS_EVENTS,
 } from '@teamsphere/shared';
 import { useAuth } from '@/lib/auth-store';
-import { getDesktop } from '@/lib/desktop';
+import { myStatus, notifyDesktop } from '@/lib/notify';
 import { getSocket } from '@/lib/socket';
 import {
   findChannel, markChannelRead, patchChannel, setChannelReactions, tk, updateChannelMessage, upsertChannel, upsertPost,
@@ -68,13 +68,12 @@ export function TeamsRealtime() {
       const mentioned = m.mentionIds.includes(meId);
       patchChannel(qc, e.channelId, (c) => ({ ...c, unread: c.unread + 1, unreadMentions: c.unreadMentions + (mentioned ? 1 : 0) }));
       const found = findChannel(qc.getQueryData<TeamInfo[]>(tk.teams), (c) => c.id === e.channelId);
-      if (found && (mentioned || (!found.channel.muted && e.post?.meta.announcement))) {
+      // Channels toast for @mentions and announcements only; Do not disturb silences both.
+      if (found && (mentioned || (!found.channel.muted && e.post?.meta.announcement)) && myStatus(qc) !== 'dnd') {
         const title = `${m.author?.displayName ?? 'Someone'} in ${found.team.name} › ${found.channel.name}`;
         const body = (e.post?.meta.subject ? `${e.post.meta.subject}: ` : '') + toPlainText(m.body);
         const path = `/teams/c/${e.channelId}`;
-        const desktop = getDesktop();
-        if (desktop) desktop.notify({ title, body: body.slice(0, 200), path });
-        else if (typeof Notification !== 'undefined' && Notification.permission === 'granted') new Notification(title, { body: body.slice(0, 200), tag: path });
+        notifyDesktop(title, body.slice(0, 200), path);
       }
     };
     const onUpdated = (m: MessageInfo) => updateChannelMessage(qc, m);

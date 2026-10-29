@@ -3,7 +3,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { DesktopBridge, DesktopSettings, UpdateStatus } from '@teamsphere/shared';
 
-const EVENT_CHANNELS = ['ts:navigate', 'ts:shortcut', 'ts:idle', 'ts:call-action', 'ts:presence', 'ts:update-status'];
+const EVENT_CHANNELS = ['ts:navigate', 'ts:shortcut', 'ts:idle', 'ts:call-action', 'ts:presence', 'ts:update-status', 'ts:window-state'];
 
 // Events can arrive before React has subscribed (e.g. the deep link that launched the app),
 // so they're queued per channel until the first subscriber appears.
@@ -69,6 +69,8 @@ const bridge: DesktopBridge = {
   flashFrame: (flash) => ipcRenderer.send('ts:flash', flash),
   setInCall: (inCall) => ipcRenderer.send('ts:in-call', inCall),
   openWindow: (w) => ipcRenderer.send('ts:open-window', w),
+  showMainWindow: () => ipcRenderer.send('ts:show-main'),
+  setPresence: (status) => ipcRenderer.send('ts:presence-state', status),
 
   getSettings: () => ipcRenderer.invoke('ts:get-settings') as Promise<DesktopSettings>,
   updateSettings: (patch) => ipcRenderer.invoke('ts:update-settings', patch) as Promise<DesktopSettings>,
@@ -82,6 +84,7 @@ const bridge: DesktopBridge = {
   onCallAction: on('ts:call-action'),
   onPresenceRequest: on('ts:presence'),
   onUpdateStatus: on('ts:update-status'),
+  onWindowState: on('ts:window-state'),
 };
 
 if (location.protocol === 'file:') {

@@ -12,7 +12,8 @@
     "icons": "node scripts/make-icons.mjs",
     "start": "pnpm build && electron . --server=http://localhost:4001",
     "dist": "pnpm build && electron-builder --win --x64 --publish never",
-    "dist:dir": "pnpm build && electron-builder --win --x64 --dir --publish never"
+    "dist:dir": "pnpm build && electron-builder --win --x64 --dir --publish never",
+    "test": "vitest run"
   },
   "dependencies": {
     "electron-updater": "^6.6.2"
@@ -23,6 +24,7 @@
     "electron": "~44.10.0",
     "electron-builder": "^26.0.12",
     "sharp": "^0.34.4",
-    "typescript": "~5.9.3"
+    "typescript": "~5.9.3",
+    "vitest": "^3.2.4"
   }
 }

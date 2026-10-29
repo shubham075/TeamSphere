@@ -76,6 +76,34 @@
         "API_URL": "http://127.0.0.1:4006",
         "NEXT_PUBLIC_SOCKET_PORT": "4006"
       }
+    },
+    {
+      "name": "api-desktop",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--dir",
+        "apps/api",
+        "dev"
+      ],
+      "port": 4008
+    },
+    {
+      "name": "web-desktop",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--dir",
+        "apps/web",
+        "exec",
+        "next",
+        "dev",
+        "--port",
+        "4009"
+      ],
+      "port": 4009,
+      "env": {
+        "API_URL": "http://127.0.0.1:4008",
+        "NEXT_PUBLIC_SOCKET_PORT": "4008"
+      }
     }
   ]
 }

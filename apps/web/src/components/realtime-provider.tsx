@@ -16,8 +16,11 @@ import {
 } from '@/lib/chat';
 import { useChatUi } from '@/lib/chat-store';
 import { getDesktop } from '@/lib/desktop';
+import { shouldNotify, unreadBadgeCount } from '@/lib/desktop-logic';
+import { myStatus, notifyDesktop } from '@/lib/notify';
 import { isPopout } from '@/lib/popout';
 import { closeSocket, getSocket } from '@/lib/socket';
+import { useTeams } from '@/lib/teams';
 
 const isViewing = (conversationId: string) =>
   useChatUi.getState().activeConversationId === conversationId && document.visibilityState === 'visible' && document.hasFocus();
@@ -47,20 +50,6 @@ export function resumeMarkRead(conversationId: string) {
   if (useChatUi.getState().readPausedFor === conversationId) useChatUi.getState().pauseRead(null);
 }
 
-function notifyDesktop(title: string, body: string, path: string) {
-  // The main window already notifies; a popped-out chat would only duplicate it.
-  if (isPopout()) return;
-  const desktop = getDesktop();
-  if (desktop) return desktop.notify({ title, body, path });
-  if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-    const n = new Notification(title, { body, tag: path });
-    n.onclick = () => {
-      window.focus();
-      location.assign(path);
-    };
-  }
-}
-
 /**
  * Owns the Socket.IO connection for the signed-in user and folds realtime events into the query cache.
  * Also keeps unread counts in sync with the window title and the desktop app's taskbar badge.
@@ -71,6 +60,7 @@ export function RealtimeProvider() {
   const meId = useAuth((s) => s.user?.id);
   const { data: conversations } = useConversations();
   const { data: activity } = useActivity();
+  const { data: teams } = useTeams();
 
   useEffect(() => {
     if (!meId) return;
@@ -101,10 +91,11 @@ export function RealtimeProvider() {
       }
       patchConversation(qc, m.conversationId, (c) => ({ ...c, unread: c.unread + 1, hidden: false }));
       const mentioned = m.mentionIds.includes(me.id);
-      if (!conversation.muted || mentioned) {
+      const urgent = m.importance === 'urgent';
+      if (shouldNotify({ viewing: false, muted: conversation.muted, mentioned, urgent, myStatus: myStatus(qc) })) {
         const title = conversation.type === 'direct' ? (m.author?.displayName ?? 'New message') : `${m.author?.displayName} in ${conversationTitle(conversation, me.id)}`;
         const body = toPlainText(m.body) || (m.attachments.length ? 'Sent a file' : '');
-        notifyDesktop(m.importance === 'urgent' ? `URGENT: ${title}` : title, body.slice(0, 200), `/chat/${m.conversationId}`);
+        notifyDesktop(urgent ? `URGENT: ${title}` : title, body.slice(0, 200), `/chat/${m.conversationId}`);
       }
     });
 
@@ -171,22 +162,20 @@ export function RealtimeProvider() {
     useChatUi.getState().setPresence(Object.fromEntries(Object.entries(entries).filter(([id]) => !(id in useChatUi.getState().presence))));
   }, [conversations]);
 
-  // Unread totals → window title + desktop taskbar badge.
-  const unreadChats = useMemo(
-    () => conversations?.filter((c) => (c.unread > 0 || c.markedUnread) && !c.muted).length ?? 0,
-    [conversations],
+  // Unread totals → window title + desktop taskbar badge (same number in both).
+  const total = useMemo(
+    () => unreadBadgeCount({ conversations, channels: teams?.flatMap((t) => t.channels), activity }),
+    [conversations, teams, activity],
   );
-  const unreadActivity = useMemo(() => activity?.filter((a) => !a.read).length ?? 0, [activity]);
   const pathname = usePathname();
   useEffect(() => {
-    const total = unreadChats + unreadActivity;
     if (!isPopout()) getDesktop()?.setUnreadCount(total);
     // Next.js resets <title> after each navigation, so reapply it once the new page has rendered.
     const t = setTimeout(() => {
       document.title = total ? `(${total}) TeamSphere` : 'TeamSphere';
     }, 50);
     return () => clearTimeout(t);
-  }, [unreadChats, unreadActivity, pathname]);
+  }, [total, pathname]);
 
   return null;
 }

@@ -1,6 +1,6 @@
 import { app, Menu, nativeImage, Tray } from 'electron';
 import { join } from 'node:path';
-import type { ManualPresence } from '@teamsphere/shared';
+import type { ManualPresence, PresenceStatus } from '@teamsphere/shared';
 
 const asset = (name: string) => nativeImage.createFromPath(join(__dirname, '..', 'assets', name));
 
@@ -26,6 +26,7 @@ export interface TrayActions {
 export class AppTray {
   private tray: Tray;
   private unread = 0;
+  private presence: PresenceStatus | null = null;
 
   constructor(private readonly actions: TrayActions) {
     this.tray = new Tray(asset('tray.png'));
@@ -41,13 +42,28 @@ export class AppTray {
     this.tray.setToolTip(count > 0 ? `TeamSphere – ${count} unread` : 'TeamSphere');
   }
 
+  /** Mirrors the user's status (set in the app or from this menu) as the checked menu item. */
+  setPresence(status: PresenceStatus) {
+    if (status === this.presence) return;
+    this.presence = status;
+    this.rebuildMenu();
+  }
+
   rebuildMenu() {
     const a = this.actions;
     this.tray.setContextMenu(
       Menu.buildFromTemplate([
         { label: 'Open TeamSphere', click: a.show },
         { type: 'separator' },
-        { label: 'Set status', submenu: STATUSES.map((s) => ({ label: s.label, click: () => a.setPresence(s.id) })) },
+        {
+          label: 'Set status',
+          submenu: STATUSES.map((s) => ({
+            label: s.label,
+            type: 'checkbox' as const,
+            checked: s.id === this.presence,
+            click: () => a.setPresence(s.id),
+          })),
+        },
         { type: 'separator' },
         {
           label: 'Open at Windows sign-in',
