@@ -1,14 +1,16 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
-  ActivityItem, AddMembersInput, ConversationInfo, CreateConversationInput, extractMentionIds, MAX_GROUP_MEMBERS,
-  MemberSettingsInput, MessageInfo, MessagePage, ReactionEvent, ReadEvent, SendMessageInput, toPlainText, WS_EVENTS,
+  ActivityItem, AddMembersInput, ChatSectionInfo, ConversationInfo, CreateConversationInput, extractMentionIds,
+  MAX_GROUP_MEMBERS, MemberSettingsInput, MessageInfo, MessagePage, PollInput, ReactionEvent, ReadEvent,
+  SavedMessageInfo, ScheduledMessageInfo, toPlainText, WS_EVENTS,
 } from '@teamsphere/shared';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../infra/storage';
-import { PresenceService } from '../presence/presence.service';
+import { isOutOfOffice, PresenceService } from '../presence/presence.service';
 import { RealtimeService } from '../realtime/realtime.service';
-import { MESSAGE_INCLUDE, summarizeReactions, toMessageInfo, toUserSummary } from './chat.mapper';
+import { avatarUrl, MESSAGE_INCLUDE, summarizeReactions, toMessageInfo, toUserSummary } from './chat.mapper';
+import { firstUrl, LinkPreviewService } from './link-preview.service';
 
 const USER_SELECT = { id: true, displayName: true, avatarKey: true, jobTitle: true } as const;
 
@@ -19,20 +21,40 @@ const CONVERSATION_INCLUDE = {
 
 type ConversationRow = Prisma.ConversationGetPayload<{ include: typeof CONVERSATION_INCLUDE }>;
 
+type Importance = 'normal' | 'important' | 'urgent';
+
+/** Parsed send body (zod defaults applied). */
+export interface SendInput {
+  body?: string;
+  parentId?: string;
+  importance: Importance;
+  attachmentIds: string[];
+  poll?: PollInput;
+  clientId?: string;
+}
+
+const MIN_SCHEDULE_MS = 30_000;
+const MAX_SCHEDULE_MS = 90 * 24 * 60 * 60 * 1000;
+const OOO_REPLY_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
 @Injectable()
 export class ChatService {
+  private readonly logger = new Logger(ChatService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly presence: PresenceService,
     private readonly realtime: RealtimeService,
+    private readonly linkPreviews: LinkPreviewService,
   ) {}
 
   // ------------------------------------------------------------------ conversations
 
   async list(me: string): Promise<ConversationInfo[]> {
     const rows = await this.prisma.conversation.findMany({
-      where: { members: { some: { userId: me } } },
+      // Channel conversations belong to Teams (Phase 2) and are listed there.
+      where: { members: { some: { userId: me } }, type: { not: 'channel' } },
       include: CONVERSATION_INCLUDE,
       orderBy: { lastMessageAt: 'desc' },
       take: 200,
@@ -107,6 +129,8 @@ export class ChatService {
     const target = conversation.members.find((m) => m.userId === userId);
     if (!target) throw new NotFoundException('Not a member of this chat');
     await this.prisma.conversationMember.delete({ where: { conversationId_userId: { conversationId: id, userId } } });
+    // Messages the removed person scheduled here would fail to send; drop them now.
+    await this.prisma.scheduledMessage.deleteMany({ where: { conversationId: id, authorId: userId } });
     const name = (await this.prisma.user.findUnique({ where: { id: userId }, select: { displayName: true } }))?.displayName;
     await this.systemMessage(id, me, userId === me ? '{actor} left the chat.' : `{actor} removed ${name} from the chat.`);
     // The removed person's client drops the chat on this event.
@@ -116,13 +140,15 @@ export class ChatService {
 
   async updateMySettings(me: string, id: string, input: MemberSettingsInput): Promise<ConversationInfo> {
     await this.requireMembership(me, id);
+    if (input.sectionId) {
+      const section = await this.prisma.chatSection.findFirst({ where: { id: input.sectionId, userId: me } });
+      if (!section) throw new NotFoundException('Section not found');
+    }
     await this.prisma.conversationMember.update({
       where: { conversationId_userId: { conversationId: id, userId: me } },
       data: input,
     });
-    const info = await this.get(me, id);
-    this.realtime.toUsers([me], WS_EVENTS.conversationUpdated, info);
-    return info;
+    return this.emitToMe(me, id);
   }
 
   async markRead(me: string, id: string): Promise<ReadEvent> {
@@ -130,11 +156,25 @@ export class ChatService {
     const lastReadAt = new Date();
     await this.prisma.conversationMember.update({
       where: { conversationId_userId: { conversationId: id, userId: me } },
-      data: { lastReadAt },
+      data: { lastReadAt, markedUnread: false },
     });
     const event: ReadEvent = { conversationId: id, userId: me, lastReadAt: lastReadAt.toISOString() };
     this.realtime.toUsers(conversation.members.map((m) => m.userId), WS_EVENTS.readUpdated, event);
     return event;
+  }
+
+  /** Marks a whole chat, or everything from one message on, as unread for me only. */
+  async markUnread(me: string, id: string, messageId?: string): Promise<ConversationInfo> {
+    await this.requireMembership(me, id);
+    const where = { conversationId_userId: { conversationId: id, userId: me } };
+    if (messageId) {
+      const message = await this.prisma.message.findFirst({ where: { id: messageId, conversationId: id } });
+      if (!message) throw new NotFoundException('Message not found');
+      await this.prisma.conversationMember.update({ where, data: { lastReadAt: new Date(message.createdAt.getTime() - 1) } });
+    } else {
+      await this.prisma.conversationMember.update({ where, data: { markedUnread: true } });
+    }
+    return this.emitToMe(me, id);
   }
 
   // ------------------------------------------------------------------ messages
@@ -158,8 +198,35 @@ export class ChatService {
     };
   }
 
-  async send(me: string, id: string, input: SendMessageInput & { importance: 'normal' | 'important' | 'urgent'; attachmentIds: string[] }): Promise<MessageInfo> {
+  /** In-chat search: newest matches first, limited to the history the caller can see. */
+  async search(me: string, id: string, q: string): Promise<MessageInfo[]> {
+    const term = q.trim();
+    if (term.length < 2) return [];
     const conversation = await this.requireMembership(me, id);
+    const since = conversation.members.find((m) => m.userId === me)?.historySince;
+    const rows = await this.prisma.message.findMany({
+      where: {
+        conversationId: id,
+        deletedAt: null,
+        type: 'text',
+        ...(since ? { createdAt: { gte: since } } : {}),
+        OR: [
+          { body: { contains: term, mode: 'insensitive' } },
+          { attachments: { some: { fileName: { contains: term, mode: 'insensitive' } } } },
+          { poll: { question: { contains: term, mode: 'insensitive' } } },
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      include: MESSAGE_INCLUDE,
+    });
+    return rows.map((m) => toMessageInfo(m, this.storage));
+  }
+
+  async send(me: string, id: string, input: SendInput): Promise<MessageInfo> {
+    const conversation = await this.requireMembership(me, id);
+    // Channel posts go through ChannelPostsService, which applies moderation and threading.
+    if (conversation.type === 'channel') throw new BadRequestException('Post in the channel instead');
     const memberIds = conversation.members.map((m) => m.userId);
     const body = (input.body ?? '').trim();
 
@@ -169,13 +236,7 @@ export class ChatService {
       if (!parent) throw new BadRequestException('The message you replied to was not found');
       parentAuthorId = parent.authorId;
     }
-
-    if (input.attachmentIds.length) {
-      const owned = await this.prisma.attachment.count({
-        where: { id: { in: input.attachmentIds }, conversationId: id, uploaderId: me, messageId: null },
-      });
-      if (owned !== new Set(input.attachmentIds).size) throw new BadRequestException('Invalid attachment');
-    }
+    await this.assertOwnAttachments(me, id, input.attachmentIds);
 
     const mentionIds = extractMentionIds(body).filter((uid) => memberIds.includes(uid));
     const message = await this.prisma.$transaction(async (tx) => {
@@ -187,6 +248,9 @@ export class ChatService {
           body,
           importance: input.importance,
           mentions: { create: mentionIds.map((userId) => ({ userId })) },
+          ...(input.poll
+            ? { poll: { create: { question: input.poll.question, options: input.poll.options, multiple: input.poll.multiple ?? false } } }
+            : {}),
         },
       });
       if (input.attachmentIds.length) {
@@ -196,7 +260,7 @@ export class ChatService {
       await tx.conversationMember.updateMany({ where: { conversationId: id, hidden: true }, data: { hidden: false } });
       await tx.conversationMember.update({
         where: { conversationId_userId: { conversationId: id, userId: me } },
-        data: { lastReadAt: created.createdAt },
+        data: { lastReadAt: created.createdAt, markedUnread: false },
       });
       return tx.message.findUniqueOrThrow({ where: { id: created.id }, include: MESSAGE_INCLUDE });
     });
@@ -204,11 +268,15 @@ export class ChatService {
     const info = toMessageInfo(message, this.storage, input.clientId);
     this.realtime.toUsers(memberIds, WS_EVENTS.messageNew, info);
 
-    const preview = toPlainText(body).slice(0, 200) || (input.attachmentIds.length ? 'Sent a file' : '');
+    const preview =
+      toPlainText(body).slice(0, 200) || (input.poll ? `Poll: ${input.poll.question}` : input.attachmentIds.length ? 'Sent a file' : '');
     const notify = new Map<string, 'mention' | 'reply'>();
     for (const uid of mentionIds) if (uid !== me) notify.set(uid, 'mention');
     if (parentAuthorId && parentAuthorId !== me && !notify.has(parentAuthorId)) notify.set(parentAuthorId, 'reply');
     await Promise.all([...notify].map(([userId, type]) => this.notify(userId, type, me, id, message.id, preview)));
+
+    this.unfurl(message.id, body, memberIds);
+    if (conversation.type === 'direct') await this.outOfOfficeReply(me, conversation);
     return info;
   }
 
@@ -216,17 +284,20 @@ export class ChatService {
     const message = await this.ownMessage(me, messageId);
     const members = await this.memberIds(message.conversationId);
     const mentionIds = extractMentionIds(body).filter((uid) => members.includes(uid));
+    const linkChanged = firstUrl(body) !== firstUrl(message.body);
     const updated = await this.prisma.message.update({
       where: { id: messageId },
       data: {
         body,
         editedAt: new Date(),
         mentions: { deleteMany: {}, create: mentionIds.map((userId) => ({ userId })) },
+        ...(linkChanged ? { linkPreview: Prisma.DbNull } : {}),
       },
       include: MESSAGE_INCLUDE,
     });
     const info = toMessageInfo(updated, this.storage);
     this.realtime.toUsers(members, WS_EVENTS.messageUpdated, info);
+    if (linkChanged) this.unfurl(messageId, body, members);
     return info;
   }
 
@@ -235,7 +306,14 @@ export class ChatService {
     const attachments = await this.prisma.attachment.findMany({ where: { messageId } });
     const updated = await this.prisma.message.update({
       where: { id: messageId },
-      data: { deletedAt: new Date(), body: '', reactions: { deleteMany: {} }, mentions: { deleteMany: {} } },
+      data: {
+        deletedAt: new Date(),
+        body: '',
+        linkPreview: Prisma.DbNull,
+        reactions: { deleteMany: {} },
+        mentions: { deleteMany: {} },
+        savedBy: { deleteMany: {} },
+      },
       include: MESSAGE_INCLUDE,
     });
     await this.prisma.attachment.deleteMany({ where: { messageId } });
@@ -268,6 +346,169 @@ export class ChatService {
     const event: ReactionEvent = { conversationId: message.conversationId, messageId, reactions: summarizeReactions(rows) };
     this.realtime.toUsers(members, WS_EVENTS.reactionChanged, event);
     return event;
+  }
+
+  // ------------------------------------------------------------------ polls
+
+  /** Replaces my votes on a poll (an empty list withdraws my vote). */
+  async vote(me: string, messageId: string, options: number[]): Promise<MessageInfo> {
+    const { poll, members } = await this.pollForMember(me, messageId);
+    if (poll.closedAt) throw new BadRequestException('This poll is closed');
+    const picked = [...new Set(options)];
+    if (picked.some((o) => o >= poll.options.length)) throw new BadRequestException('Invalid option');
+    if (!poll.multiple && picked.length > 1) throw new BadRequestException('Pick one option');
+    await this.prisma.$transaction([
+      this.prisma.pollVote.deleteMany({ where: { pollId: poll.id, userId: me } }),
+      this.prisma.pollVote.createMany({ data: picked.map((option) => ({ pollId: poll.id, userId: me, option })) }),
+    ]);
+    return this.emitMessage(messageId, members);
+  }
+
+  async closePoll(me: string, messageId: string): Promise<MessageInfo> {
+    const { poll, message, members } = await this.pollForMember(me, messageId);
+    if (message.authorId !== me) throw new ForbiddenException('Only the person who created the poll can close it');
+    if (!poll.closedAt) await this.prisma.poll.update({ where: { id: poll.id }, data: { closedAt: new Date() } });
+    return this.emitMessage(messageId, members);
+  }
+
+  // ------------------------------------------------------------------ saved messages
+
+  async listSaved(me: string): Promise<SavedMessageInfo[]> {
+    const rows = await this.prisma.savedMessage.findMany({
+      // Saved messages from chats I've since left are hidden (not deleted, in case I'm re-added).
+      where: { userId: me, message: { deletedAt: null, conversation: { members: { some: { userId: me } } } } },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+      include: { message: { include: { ...MESSAGE_INCLUDE, conversation: { select: { title: true, type: true } } } } },
+    });
+    return rows.map((r) => ({
+      message: toMessageInfo(r.message, this.storage),
+      conversationTitle: r.message.conversation.title,
+      savedAt: r.createdAt.toISOString(),
+    }));
+  }
+
+  async setSaved(me: string, messageId: string, saved: boolean): Promise<{ messageId: string; saved: boolean }> {
+    const message = await this.prisma.message.findUnique({ where: { id: messageId } });
+    if (!message || message.deletedAt || !(await this.memberIds(message.conversationId)).includes(me)) {
+      throw new NotFoundException('Message not found');
+    }
+    if (saved) {
+      await this.prisma.savedMessage.upsert({
+        where: { userId_messageId: { userId: me, messageId } },
+        create: { userId: me, messageId },
+        update: {},
+      });
+    } else {
+      await this.prisma.savedMessage.deleteMany({ where: { userId: me, messageId } });
+    }
+    const event = { messageId, saved };
+    this.realtime.toUsers([me], WS_EVENTS.savedUpdated, event);
+    return event;
+  }
+
+  // ------------------------------------------------------------------ chat sections
+
+  async listSections(me: string): Promise<ChatSectionInfo[]> {
+    const rows = await this.prisma.chatSection.findMany({ where: { userId: me }, orderBy: [{ position: 'asc' }, { createdAt: 'asc' }] });
+    return rows.map((s) => ({ id: s.id, name: s.name, position: s.position }));
+  }
+
+  async createSection(me: string, name: string): Promise<ChatSectionInfo[]> {
+    const count = await this.prisma.chatSection.count({ where: { userId: me } });
+    if (count >= 50) throw new BadRequestException('You can have up to 50 sections');
+    await this.prisma.chatSection.create({ data: { userId: me, name, position: count } });
+    return this.emitSections(me);
+  }
+
+  async renameSection(me: string, id: string, name: string): Promise<ChatSectionInfo[]> {
+    const { count } = await this.prisma.chatSection.updateMany({ where: { id, userId: me }, data: { name } });
+    if (!count) throw new NotFoundException('Section not found');
+    return this.emitSections(me);
+  }
+
+  /** Deleting a section moves its chats back to Recent (sectionId is SET NULL by the database). */
+  async deleteSection(me: string, id: string): Promise<ChatSectionInfo[]> {
+    const { count } = await this.prisma.chatSection.deleteMany({ where: { id, userId: me } });
+    if (!count) throw new NotFoundException('Section not found');
+    const sections = await this.emitSections(me);
+    // Chats that were in the section changed too.
+    this.realtime.toUsers([me], WS_EVENTS.conversationUpdated, { sectionRemoved: id });
+    return sections;
+  }
+
+  async reorderSections(me: string, ids: string[]): Promise<ChatSectionInfo[]> {
+    await this.prisma.$transaction(
+      ids.map((id, position) => this.prisma.chatSection.updateMany({ where: { id, userId: me }, data: { position } })),
+    );
+    return this.emitSections(me);
+  }
+
+  // ------------------------------------------------------------------ scheduled send
+
+  async schedule(me: string, id: string, input: Omit<SendInput, 'poll' | 'clientId'> & { sendAt: string }): Promise<ScheduledMessageInfo> {
+    await this.requireMembership(me, id);
+    const sendAt = new Date(input.sendAt);
+    const delay = sendAt.getTime() - Date.now();
+    if (delay < MIN_SCHEDULE_MS) throw new BadRequestException('Pick a time at least a minute from now');
+    if (delay > MAX_SCHEDULE_MS) throw new BadRequestException('Messages can be scheduled up to 90 days ahead');
+    if (input.parentId && !(await this.prisma.message.findFirst({ where: { id: input.parentId, conversationId: id } }))) {
+      throw new BadRequestException('The message you replied to was not found');
+    }
+    await this.assertOwnAttachments(me, id, input.attachmentIds);
+    const row = await this.prisma.scheduledMessage.create({
+      data: {
+        conversationId: id,
+        authorId: me,
+        body: (input.body ?? '').trim(),
+        parentId: input.parentId,
+        importance: input.importance,
+        attachmentIds: input.attachmentIds,
+        sendAt,
+      },
+    });
+    this.emitScheduled(me, id);
+    return toScheduledInfo(row);
+  }
+
+  async listScheduled(me: string, conversationId?: string): Promise<ScheduledMessageInfo[]> {
+    const rows = await this.prisma.scheduledMessage.findMany({
+      where: { authorId: me, ...(conversationId ? { conversationId } : {}) },
+      orderBy: { sendAt: 'asc' },
+    });
+    return rows.map(toScheduledInfo);
+  }
+
+  async cancelScheduled(me: string, id: string): Promise<void> {
+    const row = await this.prisma.scheduledMessage.findFirst({ where: { id, authorId: me } });
+    if (!row) throw new NotFoundException('Scheduled message not found');
+    await this.prisma.scheduledMessage.delete({ where: { id } });
+    this.emitScheduled(me, row.conversationId);
+  }
+
+  async sendScheduledNow(me: string, id: string): Promise<MessageInfo> {
+    const row = await this.prisma.scheduledMessage.findFirst({ where: { id, authorId: me } });
+    if (!row) throw new NotFoundException('Scheduled message not found');
+    return this.deliverScheduled(row);
+  }
+
+  /** Called by the scheduler for each due message; the row is claimed (deleted) first so it's sent at most once. */
+  async deliverScheduled(row: { id: string; conversationId: string; authorId: string; body: string; parentId: string | null; importance: Importance; attachmentIds: string[] }) {
+    const { count } = await this.prisma.scheduledMessage.deleteMany({ where: { id: row.id } });
+    if (!count) throw new NotFoundException('Scheduled message not found');
+    this.emitScheduled(row.authorId, row.conversationId);
+    // The reply target may have been deleted in the meantime; send without the quote rather than fail.
+    const parentExists = row.parentId && (await this.prisma.message.count({ where: { id: row.parentId, conversationId: row.conversationId } }));
+    const attachments = await this.prisma.attachment.findMany({
+      where: { id: { in: row.attachmentIds }, conversationId: row.conversationId, uploaderId: row.authorId, messageId: null },
+      select: { id: true },
+    });
+    return this.send(row.authorId, row.conversationId, {
+      body: row.body,
+      parentId: parentExists ? row.parentId! : undefined,
+      importance: row.importance,
+      attachmentIds: attachments.map((a) => a.id),
+    });
   }
 
   // ------------------------------------------------------------------ attachments
@@ -343,9 +584,7 @@ export class ChatService {
     return {
       id: n.id,
       type: n.type as ActivityItem['type'],
-      actor: n.actor
-        ? { id: n.actor.id, displayName: n.actor.displayName, avatarUrl: n.actor.avatarKey ? `/api/users/${n.actor.id}/avatar` : null }
-        : null,
+      actor: n.actor ? { id: n.actor.id, displayName: n.actor.displayName, avatarUrl: avatarUrl(n.actor) } : null,
       conversationId: n.conversation?.id ?? null,
       conversationTitle: n.conversation?.title ?? (n.conversation?.type === 'direct' ? 'Chat' : null),
       messageId: n.messageId,
@@ -353,6 +592,40 @@ export class ChatService {
       read: !!n.readAt,
       createdAt: n.createdAt.toISOString(),
     };
+  }
+
+  /** Fetches a link preview after sending, then pushes the updated message. Never blocks or fails the send. */
+  private unfurl(messageId: string, body: string, memberIds: string[]) {
+    const url = this.linkPreviews.enabled ? firstUrl(body) : null;
+    if (!url) return;
+    void (async () => {
+      const preview = await this.linkPreviews.preview(url);
+      if (!preview) return;
+      // Only apply if the message still links to the same URL (it may have been edited or deleted meanwhile).
+      const current = await this.prisma.message.findUnique({ where: { id: messageId }, select: { body: true, deletedAt: true } });
+      if (!current || current.deletedAt || firstUrl(current.body) !== url) return;
+      await this.prisma.message.update({ where: { id: messageId }, data: { linkPreview: preview as unknown as Prisma.InputJsonValue } });
+      await this.emitMessage(messageId, memberIds);
+    })().catch((e) => this.logger.warn(`Link preview failed: ${e}`));
+  }
+
+  /** In a direct chat with someone who is out of office, post their message once a day. */
+  private async outOfOfficeReply(me: string, conversation: { id: string; members: { userId: string; oooRepliedAt: Date | null }[] }) {
+    const other = conversation.members.find((m) => m.userId !== me);
+    if (!other || (other.oooRepliedAt && Date.now() - other.oooRepliedAt.getTime() < OOO_REPLY_INTERVAL_MS)) return;
+    const user = await this.prisma.user.findUnique({
+      where: { id: other.userId },
+      select: { oooEnabled: true, oooStartAt: true, oooEndAt: true, oooMessage: true },
+    });
+    if (!user || !isOutOfOffice(user)) return;
+    await this.prisma.conversationMember.update({
+      where: { conversationId_userId: { conversationId: conversation.id, userId: other.userId } },
+      data: { oooRepliedAt: new Date() },
+    });
+    const until = user.oooEndAt
+      ? ` until ${user.oooEndAt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })}`
+      : '';
+    await this.systemMessage(conversation.id, other.userId, `{actor} is out of office${until}.${user.oooMessage ? ` "${user.oooMessage}"` : ''}`);
   }
 
   private async findOrCreateDirect(me: string, other: string, directKey: string, type: 'direct' | 'self') {
@@ -391,6 +664,13 @@ export class ChatService {
     this.realtime.toUsers(await this.memberIds(conversationId), WS_EVENTS.messageNew, toMessageInfo(message, this.storage));
   }
 
+  private async emitMessage(messageId: string, memberIds: string[]): Promise<MessageInfo> {
+    const row = await this.prisma.message.findUniqueOrThrow({ where: { id: messageId }, include: MESSAGE_INCLUDE });
+    const info = toMessageInfo(row, this.storage);
+    this.realtime.toUsers(memberIds, WS_EVENTS.messageUpdated, info);
+    return info;
+  }
+
   /** Sends each member their own view of the conversation (unread counts and settings differ per person). */
   private async emitConversation(id: string, me: string): Promise<ConversationInfo> {
     const row = await this.prisma.conversation.findUniqueOrThrow({ where: { id }, include: CONVERSATION_INCLUDE });
@@ -402,6 +682,23 @@ export class ChatService {
       }),
     );
     return (await this.present([row], me))[0];
+  }
+
+  /** Per-person changes (settings, unread flags) go to my other devices only. */
+  private async emitToMe(me: string, id: string): Promise<ConversationInfo> {
+    const info = await this.get(me, id);
+    this.realtime.toUsers([me], WS_EVENTS.conversationUpdated, info);
+    return info;
+  }
+
+  private async emitSections(me: string) {
+    const sections = await this.listSections(me);
+    this.realtime.toUsers([me], WS_EVENTS.sectionsUpdated, sections);
+    return sections;
+  }
+
+  private emitScheduled(me: string, conversationId: string) {
+    this.realtime.toUsers([me], WS_EVENTS.scheduledUpdated, { conversationId });
   }
 
   private async present(rows: ConversationRow[], me: string): Promise<ConversationInfo[]> {
@@ -426,18 +723,20 @@ export class ChatService {
       const visibleLast = last && (!mine?.historySince || last.createdAt >= mine.historySince) ? last : null;
       return {
         id: r.id,
-        type: r.type,
+        type: r.type as ConversationInfo['type'], // channel conversations are excluded from chat lists
         title: r.title,
         members: r.members.map((m) => ({
-          user: toUserSummary(m.user, presence.get(m.userId)?.status ?? 'offline'),
+          user: toUserSummary(m.user, presence.get(m.userId)),
           lastReadAt: m.lastReadAt?.toISOString() ?? null,
         })),
         lastMessage: visibleLast ? toMessageInfo(visibleLast, this.storage) : null,
         lastMessageAt: r.lastMessageAt.toISOString(),
         unread: unread.get(r.id) ?? 0,
+        markedUnread: mine?.markedUnread ?? false,
         muted: mine?.muted ?? false,
         pinned: mine?.pinned ?? false,
         hidden: mine?.hidden ?? false,
+        sectionId: mine?.sectionId ?? null,
       };
     });
   }
@@ -460,9 +759,45 @@ export class ChatService {
     return message;
   }
 
+  private async pollForMember(me: string, messageId: string) {
+    const message = await this.prisma.message.findUnique({ where: { id: messageId }, include: { poll: true } });
+    if (!message || message.deletedAt || !message.poll) throw new NotFoundException('Poll not found');
+    const members = await this.memberIds(message.conversationId);
+    if (!members.includes(me)) throw new NotFoundException('Poll not found');
+    return { message, poll: message.poll, members };
+  }
+
+  private async assertOwnAttachments(me: string, conversationId: string, ids: string[]) {
+    if (!ids.length) return;
+    const owned = await this.prisma.attachment.count({ where: { id: { in: ids }, conversationId, uploaderId: me, messageId: null } });
+    if (owned !== new Set(ids).size) throw new BadRequestException('Invalid attachment');
+  }
+
   private async assertActiveUsers(ids: string[]) {
     const users = await this.prisma.user.findMany({ where: { id: { in: ids }, isActive: true }, select: { id: true, displayName: true } });
     if (users.length !== new Set(ids).size) throw new BadRequestException('Some people could not be found');
     return users;
   }
+}
+
+function toScheduledInfo(r: {
+  id: string;
+  conversationId: string;
+  body: string;
+  importance: Importance;
+  parentId: string | null;
+  attachmentIds: string[];
+  sendAt: Date;
+  createdAt: Date;
+}): ScheduledMessageInfo {
+  return {
+    id: r.id,
+    conversationId: r.conversationId,
+    body: r.body,
+    importance: r.importance,
+    parentId: r.parentId,
+    attachmentCount: r.attachmentIds.length,
+    sendAt: r.sendAt.toISOString(),
+    createdAt: r.createdAt.toISOString(),
+  };
 }

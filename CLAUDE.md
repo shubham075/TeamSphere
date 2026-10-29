@@ -8,7 +8,8 @@ a Windows desktop app. Own branding only: never use Microsoft names, logos or as
 1. **[SOURCE_OF_TRUTH.md](SOURCE_OF_TRUTH.md)** is the spec: scope (§3), architecture (§6), data model (§7),
    phases (§9), decisions (§12), change log (§14). Record every scope or design change there first.
 2. **[README.md](README.md)** has the roadmap table (what's done / next) and the setup steps.
-3. Pick up the **first unfinished item** in the roadmap (currently: the remaining Phase 1 items, then Phase 2).
+3. Pick up the **first unfinished item** in the roadmap (currently: Phase 2; Phases 2, 3 and 6 were started on
+   parallel branches `claude/phase2-teams-*`, `claude/phase3-calling-*`, `claude/phase6-files-*`, so check those first).
 4. When you finish an item: update the README roadmap, SOURCE_OF_TRUTH §9 + §14, run checks, then commit and push.
 
 ## Product decisions (don't re-ask)
@@ -35,11 +36,11 @@ pnpm infra:up                 # Docker: postgres 5433, redis 6380, seaweedfs s3 
 pnpm build:shared             # required before typechecking api/web after shared changes
 pnpm db:migrate               # prisma migrate dev (apps/api)
 pnpm db:seed                  # dev accounts (see README §3)
-pnpm dev                      # shared watch + api (4600) + web (3000)
+pnpm dev                      # shared watch + api (4000) + web (4001)
 pnpm typecheck                # all packages
 pnpm --filter @teamsphere/api test          # vitest
 pnpm --filter @teamsphere/api user:create -- --username x --name "X" [--role admin]
-pnpm --dir apps/desktop start               # desktop dev against http://localhost:3000
+pnpm --dir apps/desktop start               # desktop dev against http://localhost:4001
 pnpm --dir apps/desktop dist                # Windows installers → apps/desktop/release/
 ```
 
@@ -56,7 +57,7 @@ pnpm --dir apps/desktop dist                # Windows installers → apps/deskto
 ## Gotchas (learned the hard way)
 
 - Use **127.0.0.1**, not `localhost`, for server-side URLs on Windows (Node may resolve `::1`).
-- API dev port is **4600** because port 4000 clashed with another local project.
+- Dev ports: API **4000**, web **4001** (3000 and 4600 clashed with other local projects). Parallel phase stacks use pairs 4002/4003 (calls), 4004/4005 (teams), 4006/4007 (files) with their own DB, Redis index and bucket.
 - Windows PowerShell 5.1 `Set-Content -Encoding utf8` writes a **BOM**, which breaks `.env` parsing. Use bash or the editor.
 - pnpm 12: packages with install scripts must be listed under `allowBuilds` in `pnpm-workspace.yaml`.
 - Stop the API before `prisma generate` on Windows, because the query engine DLL is locked while it runs.

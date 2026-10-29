@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { MORE_APPS, RAIL_APPS, RailApp } from '@/lib/apps';
 import { useActivity, useConversations } from '@/lib/chat';
+import { useTeamsUnread } from '@/lib/teams';
 
 function RailItem({ app, active, badge = 0 }: { app: RailApp; active: boolean; badge?: number }) {
   const Icon = app.icon;
@@ -36,9 +37,11 @@ export function AppRail() {
   const current = pathname.split('/')[1];
   const { data: conversations } = useConversations();
   const { data: activity } = useActivity();
+  const teamsUnread = useTeamsUnread();
   const badges: Record<string, number> = {
     chat: conversations?.filter((c) => c.unread > 0 && !c.muted).length ?? 0,
     activity: activity?.filter((a) => !a.read).length ?? 0,
+    teams: teamsUnread,
   };
 
   return (

@@ -4,3 +4,4 @@ export * from './events';
 export * from './desktop';
 export * from './chat';
 export * from './calls';
+export * from './teams';

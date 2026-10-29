@@ -7,8 +7,8 @@ const bool = z
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  PORT: z.coerce.number().default(4600),
-  WEB_ORIGIN: z.string().url().default('http://localhost:3000'),
+  PORT: z.coerce.number().default(4000),
+  WEB_ORIGIN: z.string().url().default('http://localhost:4001'),
   DATABASE_URL: z.string().min(1),
   REDIS_URL: z.string().default('redis://localhost:6380'),
 
@@ -48,6 +48,13 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .default('true')
     .transform((v) => v === 'true'),
+
+  LINK_PREVIEWS_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+  /** Allow previews of intranet links (private IP ranges). Off by default so chat links can't probe internal services. */
+  LINK_PREVIEW_ALLOW_PRIVATE: bool,
 });
 
 export type Env = z.infer<typeof envSchema>;

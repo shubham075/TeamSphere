@@ -15,8 +15,8 @@ Full feature lists per area are in [SOURCE_OF_TRUTH.md §3](SOURCE_OF_TRUTH.md);
 |---|---|---|---|
 | 0 | Foundation | ✅ | pnpm monorepo, Docker dev infra, Prisma, auth (username/password, Microsoft Entra ID, on-prem AD/LDAP), sessions & devices, profile, presence, app shell, settings, basic user admin |
 | 0.5 | Windows desktop shell | ✅ | Electron app, NSIS + MSI installers, tray + status menu, Windows toasts (incl. call toast), screen picker, taskbar badge, deep links, idle → Away, auto-update |
-| 1 | Chat & presence | 🚧 | **Done:** 1:1/group/self chats, realtime delivery, formatting, @mentions, reply, edit/delete, reactions, typing, Seen, unread, attachments, importance, pin/mute, members, Activity feed, notifications. **To do:** scheduled send, saved messages, mark unread, chat folders, polls, voice clips, link previews, pop-out chat, urgent re-notify, in-chat search, avatar upload, status expiry UI, out-of-office |
-| 2 | Teams & channels | ⏳ | Teams (public/private/org-wide), standard/private/shared channels, threaded posts, @team/@channel/@tags, announcements, moderation, channel tabs, wiki, archive |
+| 1 | Chat & presence | ✅ | 1:1/group/self chats, realtime delivery, formatting, @mentions, reply, edit/delete, reactions, typing, Seen, unread, attachments, importance, pin/mute, members, Activity feed, notifications, scheduled send, saved messages, mark unread, chat sections (folders), polls, voice clips, link previews, pop-out chat, urgent re-notify, in-chat search, avatar upload, status durations/expiry, out of office with auto-reply |
+| 2 | Teams & channels | ✅ | Teams (public/private/org-wide, from scratch or copied), owner/member/guest roles & permissions, standard/private/shared channels, threaded posts & replies, @team/@channel/@tag mentions, tags, announcements, cross-posting, moderation, Posts/Files/Notes tabs, archive/restore/delete (30-day bin), discovery & join codes, pin channels, reorder/hide teams, unread counts |
 | 3 | Calling | ✅ | LiveKit 1:1 & group audio/video, ringing (accept / audio-only / decline, 30 s timeout → missed call), screen share, mute/camera, device settings + test, network quality, reconnect, audio-only fallback, add people, hold/resume, blind transfer, forwarding & simultaneous ring, internal voicemail, busy-on-busy & DND rejection, call history & call back, speed dial, "In a call" presence. **Later:** consult transfer, call groups/delegation, E2EE (P2) |
 | 4 | Desktop integration | ⏳ | Wire desktop shell into chat & calls: call toast actions, mute/camera shortcuts, mini call window |
 | 5 | Meetings & calendar | ⏳ | Scheduling, calendar views, scheduling assistant, lobby, roles, recording, breakout rooms, whiteboard, polls, attendance, guest join |
@@ -140,7 +140,7 @@ pnpm db:seed
 pnpm dev
 ```
 
-Open **http://localhost:3000** and sign in with the seeded admin account (see §3 for all accounts). Its username and password are the
+Open **http://localhost:4001** and sign in with the seeded admin account (see §3 for all accounts). Its username and password are the
 `SEED_ADMIN_USERNAME` / `SEED_ADMIN_PASSWORD` values in `apps/api/.env`. Demo colleagues (`alex.morgan`,
 `priya.sharma`, `daniel.kim`, `sara.lopez`) use `SEED_DEMO_PASSWORD`. These are **development-only** accounts.
 
@@ -148,15 +148,15 @@ Open **http://localhost:3000** and sign in with the seeded admin account (see §
 
 | Service | Port | Notes |
 |---|---|---|
-| Web (Next.js) | 3000 | Proxies `/api/*` to the API |
-| API (NestJS) | 4600 | `http://127.0.0.1:4600/api/health` |
+| Web (Next.js) | 4001 | Proxies `/api/*` to the API |
+| API (NestJS) | 4000 | `http://127.0.0.1:4000/api/health` |
 | PostgreSQL | 5433 | user/pass/db: `teamsphere` |
 | Redis | 6380 | |
 | S3 storage (SeaweedFS) | 8333 | key `teamsphere` / `teamsphere-secret` |
 | LiveKit | 7880 (HTTP/WS), 7881 (TCP), 7882 (UDP) | dev key `devkey` |
 | Mailpit (test inbox) | 8025 (UI), 1025 (SMTP) | http://localhost:8025 |
 
-Ports are shifted off the defaults (5433, 6380, 4600) to avoid clashing with other local projects. If one is
+Ports are shifted off the defaults (5433, 6380) to avoid clashing with other local projects. If one is
 still taken, change the host port in `infra/docker-compose.yml` and the matching URL in `apps/api/.env`.
 
 ### Useful commands
@@ -169,15 +169,15 @@ still taken, change the host port in `infra/docker-compose.yml` and the matching
 | `pnpm db:seed` | Re-run the dev seed (idempotent) |
 | `pnpm typecheck` | Typecheck every package |
 | `pnpm test` | Unit tests |
-| `pnpm --dir apps/desktop start` | Run the desktop app against `http://localhost:3000` |
+| `pnpm --dir apps/desktop start` | Run the desktop app against `http://localhost:4001` |
 
 ### Using a second device on the same network
 
 To test chat or calls between two machines (for example a laptop and a desktop):
 
 1. On the host machine, find its LAN IP (`ipconfig` / `ip addr`), e.g. `192.168.1.20`.
-2. Set `WEB_ORIGIN=http://192.168.1.20:3000` in `apps/api/.env` and restart `pnpm dev`.
-3. On the other device, open `http://192.168.1.20:3000`. Allow ports 3000 (and 7880–7882 for calls) through the host firewall.
+2. Set `WEB_ORIGIN=http://192.168.1.20:4001` in `apps/api/.env` and restart `pnpm dev`.
+3. On the other device, open `http://192.168.1.20:4001`. Allow ports 4001 (and 7880–7882 for calls) through the host firewall.
 4. Browsers only allow camera/microphone on **HTTPS or localhost**. For calls between devices, use the
    production setup below (with TLS), or a tunnel such as `cloudflared` / `ngrok` that gives you an HTTPS URL.
 
@@ -229,7 +229,7 @@ Password login works out of the box. Enable either or both SSO methods in `apps/
 **Microsoft Entra ID (Azure AD)**
 
 1. Entra admin center → App registrations → New registration (single tenant).
-2. Redirect URI (Web): `https://<your-server>/api/auth/entra/callback` (dev: `http://localhost:3000/api/auth/entra/callback`).
+2. Redirect URI (Web): `https://<your-server>/api/auth/entra/callback` (dev: `http://localhost:4001/api/auth/entra/callback`).
 3. Create a client secret.
 4. Set `ENTRA_ENABLED=true`, `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET`, `ENTRA_REDIRECT_URI`.
 
@@ -246,7 +246,7 @@ Directory users are created automatically on first sign-in. If the same person s
 ## 5. Windows desktop app
 
 ```bash
-pnpm --dir apps/desktop start     # development, against http://localhost:3000
+pnpm --dir apps/desktop start     # development, against http://localhost:4001
 pnpm --dir apps/desktop dist      # build installers (Windows only) → apps/desktop/release/
 ```
 
@@ -274,7 +274,7 @@ Firewall: **443/TCP** (HTTPS + TURN/TLS), **7881/TCP** and **50000–60000/UDP**
 3. `pnpm infra:up`, then `pnpm --filter @teamsphere/api prisma:deploy` (applies migrations without prompting).
 4. Build and start: `pnpm build`, then run `node apps/api/dist/main.js` and `pnpm --dir apps/web start`
    under a process manager (systemd, PM2, or containers).
-5. Put a reverse proxy with the company TLS certificate in front (Caddy or Nginx): route `/` → `127.0.0.1:3000`.
+5. Put a reverse proxy with the company TLS certificate in front (Caddy or Nginx): route `/` → `127.0.0.1:4001`.
    The web app proxies `/api` to the API.
 6. In `infra/livekit.yaml`: real API key/secret, remove `node_ip: 127.0.0.1` and set `use_external_ip: true`
    (or the server's LAN IP), and enable TURN/TLS on 443 for restrictive networks.
@@ -289,7 +289,7 @@ A one-command production compose file (`infra/docker-compose.prod.yml`) is on th
 | Symptom | Fix |
 |---|---|
 | `Can't reach database server at 127.0.0.1:5433` | `pnpm infra:up`; check `docker compose -f infra/docker-compose.yml ps` |
-| Web shows 500 on `/api/...` | API not running or wrong port; check `http://127.0.0.1:4600/api/health` |
+| Web shows 500 on `/api/...` | API not running or wrong port; check `http://127.0.0.1:4000/api/health` |
 | `EADDRINUSE` / another app answers on a port | Another local project uses it; change the port (see §2) |
 | `ERR_PNPM_IGNORED_BUILDS` | Add the package to `allowBuilds` in `pnpm-workspace.yaml` (true to allow, false to skip) |
 | Very slow installs / dev startup on Windows | Antivirus scanning `node_modules`; ask IT for a Defender folder exclusion |

@@ -82,6 +82,9 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
   async start(me: string, input: { conversationId?: string; userId?: string; kind: CallKind }): Promise<CallJoinInfo> {
     const conversation = input.userId ? await this.directConversation(me, input.userId) : await this.memberConversation(me, input.conversationId!);
     if (conversation.type === 'self') throw new BadRequestException("You can't call yourself");
+    if (conversation.type !== 'direct' && conversation.type !== 'group') {
+      throw new BadRequestException('Calls start from a 1:1 or group chat; channel meetings come with Meetings');
+    }
     const calleeIds = conversation.members.map((m) => m.userId).filter((id) => id !== me);
     if (!calleeIds.length) throw new BadRequestException('There is nobody else in this chat to call');
     if (calleeIds.length + 1 > MAX_CALL_PARTICIPANTS) {

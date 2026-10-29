@@ -8,7 +8,7 @@ idle/lock detection for automatic Away, pop-out windows, Ctrl+Shift+M / Ctrl+Shi
 ## Develop
 
 ```bash
-pnpm --dir apps/desktop start          # runs against http://localhost:3000 (start the api + web first)
+pnpm --dir apps/desktop start          # runs against http://localhost:4001 (start the api + web first)
 ```
 
 ## Build installers

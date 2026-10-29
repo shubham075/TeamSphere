@@ -2,25 +2,40 @@
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { ArrowLeft, Bell, BellOff, LogOut, MoreHorizontal, Pencil, Phone, Pin, PinOff, UserPlus, Users, Video } from 'lucide-react';
+import {
+  ArrowLeft, Bell, BellOff, EyeOff, FolderInput, LogOut, MoreHorizontal, Pencil, Phone, Pin, PinOff, Search, SquareArrowOutUpRight,
+  UserPlus, Users, Video,
+} from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useRef, useState } from 'react';
 import { ConversationInfo, PRESENCE_LABELS_OTHERS, PublicUser } from '@teamsphere/shared';
 import { Avatar } from '@/components/avatar';
 import { api } from '@/lib/api';
-import { conversationTitle, otherMember, removeConversation, upsertConversation, useMemberSettings } from '@/lib/chat';
+import { pauseMarkRead } from '@/components/realtime-provider';
+import { conversationTitle, otherMember, removeConversation, upsertConversation, useMarkUnread, useMemberSettings, useSections } from '@/lib/chat';
 import { usePresence } from '@/lib/chat-store';
+import { popOutChat, usePopout } from '@/lib/popout';
 import { useDismiss } from '@/lib/use-dismiss';
 import { useCallStore } from '@/lib/call-store';
 import { ConversationAvatar } from './conversation-avatar';
 import { AddPeopleDialog } from './add-people-dialog';
 import { NewChatDialog } from './new-chat-dialog';
 
-export function ConversationHeader({ conversation: c, meId }: { conversation: ConversationInfo; meId: string }) {
+interface HeaderProps {
+  conversation: ConversationInfo;
+  meId: string;
+  searching: boolean;
+  onToggleSearch: () => void;
+}
+
+export function ConversationHeader({ conversation: c, meId, searching, onToggleSearch }: HeaderProps) {
   const qc = useQueryClient();
   const router = useRouter();
   const settings = useMemberSettings(c.id);
+  const markUnread = useMarkUnread();
+  const { data: sections } = useSections();
+  const popout = usePopout();
   const other = otherMember(c, meId);
   const presence = usePresence(other?.id, other?.presence);
   const [menu, setMenu] = useState<'none' | 'more' | 'people'>('none');
@@ -99,6 +114,20 @@ export function ConversationHeader({ conversation: c, meId }: { conversation: Co
               </button>
             </>
           ))}
+        <button
+          onClick={onToggleSearch}
+          aria-pressed={searching}
+          title="Search in this chat"
+          aria-label="Search in this chat"
+          className={clsx('rounded p-2 hover:bg-surface-hover', searching && 'bg-surface-hover text-brand')}
+        >
+          <Search size={18} />
+        </button>
+        {!popout && (
+          <button onClick={() => popOutChat(c.id)} title="Pop out chat" aria-label="Pop out chat" className="rounded p-2 hover:bg-surface-hover max-md:hidden">
+            <SquareArrowOutUpRight size={18} />
+          </button>
+        )}
         {c.type === 'group' && (
           <button
             onClick={() => setMenu(menu === 'people' ? 'none' : 'people')}
@@ -135,6 +164,29 @@ export function ConversationHeader({ conversation: c, meId }: { conversation: Co
           <div className="absolute top-11 right-0 z-30 w-56 rounded-md border border-border bg-surface py-1 text-sm shadow-xl">
             <MenuButton icon={c.pinned ? PinOff : Pin} label={c.pinned ? 'Unpin' : 'Pin'} onClick={() => settings.mutate({ pinned: !c.pinned })} />
             <MenuButton icon={c.muted ? Bell : BellOff} label={c.muted ? 'Unmute' : 'Mute'} onClick={() => settings.mutate({ muted: !c.muted })} />
+            <MenuButton
+              icon={EyeOff}
+              label="Mark as unread"
+              onClick={() => {
+                pauseMarkRead(c.id);
+                markUnread.mutate({ conversationId: c.id });
+              }}
+            />
+            {!!sections?.length && (
+              <div className="border-y border-border py-1">
+                <p className="flex items-center gap-2 px-3 py-1 text-xs font-semibold text-muted">
+                  <FolderInput size={13} /> Move to section
+                </p>
+                {sections.map((s) => (
+                  <MenuButton
+                    key={s.id}
+                    icon={FolderInput}
+                    label={c.sectionId === s.id ? `✓ ${s.name}` : s.name}
+                    onClick={() => settings.mutate({ sectionId: c.sectionId === s.id ? null : s.id })}
+                  />
+                ))}
+              </div>
+            )}
             {c.type === 'group' && (
               <>
                 <MenuButton icon={Pencil} label="Rename" onClick={() => setRenaming(true)} />

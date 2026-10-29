@@ -72,7 +72,7 @@ export interface CallParticipantInfo {
 export interface CallInfo {
   id: string;
   conversationId: string | null;
-  conversationType: 'direct' | 'group' | 'self' | null;
+  conversationType: 'direct' | 'group' | 'self' | 'channel' | null;
   /** Group chat name, if any. Clients fall back to participant names. */
   title: string | null;
   kind: CallKind;

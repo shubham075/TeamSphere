@@ -40,11 +40,21 @@ model User {
   role         UserRole     @default(user)
   isActive     Boolean      @default(true)
 
+  teamMemberships    TeamMember[]
+  channelMemberships ChannelMember[]
+  tagMemberships     TagMember[]
+
   /// Manually chosen presence; null means automatic (available while connected).
   presenceStatus    String?
   presenceExpiresAt DateTime?
   statusMessage     String?
   statusExpiresAt   DateTime?
+
+  /// Out of office: active while enabled and now is within [oooStartAt, oooEndAt) (open ends allowed).
+  oooEnabled Boolean   @default(false)
+  oooMessage String?
+  oooStartAt DateTime?
+  oooEndAt   DateTime?
 
   lastLoginAt DateTime?
   createdAt   DateTime  @default(now())
@@ -61,6 +71,10 @@ model User {
   attachments         Attachment[]
   notifications       Notification[]       @relation("NotificationUser")
   actedNotifications  Notification[]       @relation("NotificationActor")
+  savedMessages       SavedMessage[]
+  chatSections        ChatSection[]
+  scheduledMessages   ScheduledMessage[]
+  pollVotes           PollVote[]
 
   callsStarted       Call[]            @relation("CallStarter")
   callsTransferred   Call[]            @relation("CallTransferrer")
@@ -125,6 +139,8 @@ enum ConversationType {
   direct
   group
   self
+  /// A team channel's posts (Phase 2). Members are synced from the channel's access list by TeamsService.
+  channel
 }
 
 enum MessageType {
@@ -149,11 +165,12 @@ model Conversation {
   updatedAt     DateTime         @updatedAt
   lastMessageAt DateTime         @default(now())
 
-  members       ConversationMember[]
-  messages      Message[]
-  attachments   Attachment[]
-  notifications Notification[]
-  calls         Call[]
+  members           ConversationMember[]
+  messages          Message[]
+  attachments       Attachment[]
+  notifications     Notification[]
+  scheduledMessages ScheduledMessage[]
+  calls             Call[]
 
   @@index([lastMessageAt])
 }
@@ -171,6 +188,12 @@ model ConversationMember {
   muted          Boolean      @default(false)
   pinned         Boolean      @default(false)
   hidden         Boolean      @default(false)
+  /// "Mark as unread" on the whole chat; cleared by the next read.
+  markedUnread   Boolean      @default(false)
+  sectionId      String?
+  section        ChatSection? @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+  /// Last out-of-office auto-reply this member's absence triggered in the chat (at most one a day).
+  oooRepliedAt   DateTime?
 
   @@id([conversationId, userId])
   @@index([userId])
@@ -190,6 +213,8 @@ model Message {
   /// Markdown-lite text; mentions are encoded as @[Display Name](userId).
   body           String
   importance     Importance   @default(normal)
+  /// Unfurled preview of the first link in the body (LinkPreview DTO), filled in after sending.
+  linkPreview    Json?
   editedAt       DateTime?
   deletedAt      DateTime?
   createdAt      DateTime     @default(now())
@@ -198,8 +223,74 @@ model Message {
   mentions      Mention[]
   attachments   Attachment[]
   notifications Notification[]
+  savedBy       SavedMessage[]
+  poll          Poll?
 
   @@index([conversationId, createdAt])
+}
+
+model SavedMessage {
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messageId String
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, messageId])
+  @@index([userId, createdAt])
+}
+
+/// A custom section ("folder") in one person's chat list.
+model ChatSection {
+  id        String               @id @default(cuid())
+  userId    String
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  position  Int                  @default(0)
+  createdAt DateTime             @default(now())
+  members   ConversationMember[]
+
+  @@index([userId])
+}
+
+/// Held until `sendAt`, then posted as a normal message by the scheduler.
+model ScheduledMessage {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  authorId       String
+  author         User         @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  body           String
+  parentId       String?
+  importance     Importance   @default(normal)
+  attachmentIds  String[]
+  sendAt         DateTime
+  createdAt      DateTime     @default(now())
+
+  @@index([sendAt])
+  @@index([authorId, conversationId])
+}
+
+model Poll {
+  id        String     @id @default(cuid())
+  messageId String     @unique
+  message   Message    @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  question  String
+  options   String[]
+  multiple  Boolean    @default(false)
+  closedAt  DateTime?
+  votes     PollVote[]
+}
+
+model PollVote {
+  pollId    String
+  poll      Poll     @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  option    Int
+  createdAt DateTime @default(now())
+
+  @@id([pollId, userId, option])
 }
 
 model Reaction {
@@ -258,6 +349,162 @@ model Notification {
   createdAt      DateTime      @default(now())
 
   @@index([userId, createdAt])
+}
+
+// ---------------------------------------------------------------- Phase 2: teams & channels
+// Channel posts reuse Conversation/Message (Conversation.type = channel; Message.parentId = thread root).
+// Channel.conversationId and ChannelPost.messageId are plain ids (no Prisma relation) so the chat models stay untouched.
+
+enum TeamVisibility {
+  public
+  private
+  orgwide
+}
+
+enum TeamRole {
+  owner
+  member
+  guest
+}
+
+enum ChannelType {
+  standard
+  private
+  shared
+}
+
+model Team {
+  id          String         @id @default(cuid())
+  name        String
+  description String?
+  visibility  TeamVisibility @default(private)
+  /// Code anyone can use to join (owners generate or reset it); null when disabled.
+  joinCode    String?        @unique
+  /// TeamSettings DTO (member/guest permissions, @team/@channel mentions).
+  settings    Json           @default("{}")
+  createdById String?
+  archivedAt  DateTime?
+  /// Soft delete: restorable for 30 days, then purged.
+  deletedAt   DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  members        TeamMember[]
+  channels       Channel[]
+  tags           Tag[]
+  sharedChannels ChannelShare[]
+
+  @@index([visibility])
+}
+
+model TeamMember {
+  teamId   String
+  team     Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role     TeamRole @default(member)
+  joinedAt DateTime @default(now())
+  /// Personal order in the teams list (ascending) and visibility.
+  position Int      @default(0)
+  hidden   Boolean  @default(false)
+
+  @@id([teamId, userId])
+  @@index([userId])
+}
+
+model Channel {
+  id             String      @id @default(cuid())
+  teamId         String
+  team           Team        @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  name           String
+  description    String?
+  type           ChannelType @default(standard)
+  /// Every team has exactly one General channel; it can't be renamed, archived or deleted.
+  isGeneral      Boolean     @default(false)
+  conversationId String      @unique
+  /// ChannelModeration DTO.
+  moderation     Json        @default("{}")
+  /// Notes tab: a co-owned markdown page. `notesVersion` guards against overwriting someone else's edit.
+  notes          String      @default("")
+  notesVersion   Int         @default(0)
+  notesUpdatedAt DateTime?
+  notesUpdatedBy String?
+  createdById    String?
+  archivedAt     DateTime?
+  deletedAt      DateTime?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  members ChannelMember[]
+  shares  ChannelShare[]
+  posts   ChannelPost[]
+
+  @@index([teamId])
+}
+
+/// Explicit members of private and shared channels (standard channels include the whole team).
+model ChannelMember {
+  channelId String
+  channel   Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// owner | member
+  role      String   @default("member")
+  addedAt   DateTime @default(now())
+
+  @@id([channelId, userId])
+  @@index([userId])
+}
+
+/// A shared channel made available to every member of another team.
+model ChannelShare {
+  channelId String
+  channel   Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([channelId, teamId])
+  @@index([teamId])
+}
+
+/// Extra data for a channel's top-level post (the thread root message).
+model ChannelPost {
+  messageId          String   @id
+  channelId          String
+  channel            Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  subject            String?
+  announcement       Boolean  @default(false)
+  /// Attachment shown as the announcement banner (excluded from the post's file list).
+  headerAttachmentId String?
+  /// Same id on every copy of a cross-posted message.
+  crossPostId        String?
+  createdAt          DateTime @default(now())
+
+  @@index([channelId])
+  @@index([crossPostId])
+}
+
+/// Named group of team members that can be @mentioned together.
+model Tag {
+  id        String      @id @default(cuid())
+  teamId    String
+  team      Team        @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  name      String
+  createdAt DateTime    @default(now())
+  members   TagMember[]
+
+  @@unique([teamId, name])
+}
+
+model TagMember {
+  tagId  String
+  tag    Tag    @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([tagId, userId])
+  @@index([userId])
 }
 
 // ---------------------------------------------------------------- Phase 3: calls
@@ -320,20 +567,20 @@ model Call {
 }
 
 model CallParticipant {
-  callId          String
-  call            Call                  @relation(fields: [callId], references: [id], onDelete: Cascade)
-  userId          String
-  user            User                  @relation("CallParticipantUser", fields: [userId], references: [id], onDelete: Cascade)
-  status          CallParticipantStatus
-  isCaller        Boolean               @default(false)
-  onHold          Boolean               @default(false)
+  callId         String
+  call           Call                  @relation(fields: [callId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User                  @relation("CallParticipantUser", fields: [userId], references: [id], onDelete: Cascade)
+  status         CallParticipantStatus
+  isCaller       Boolean               @default(false)
+  onHold         Boolean               @default(false)
   /// Ringing on behalf of this user (call forwarding / simultaneous ring).
-  forwardedForId  String?
-  forwardedFor    User?                 @relation("CallForwardedFor", fields: [forwardedForId], references: [id], onDelete: SetNull)
+  forwardedForId String?
+  forwardedFor   User?                 @relation("CallForwardedFor", fields: [forwardedForId], references: [id], onDelete: SetNull)
   /// Start of the current ring; ringing older than RING_TIMEOUT_MS becomes missed.
-  invitedAt       DateTime              @default(now())
-  joinedAt        DateTime?
-  leftAt          DateTime?
+  invitedAt      DateTime              @default(now())
+  joinedAt       DateTime?
+  leftAt         DateTime?
 
   @@id([callId, userId])
   @@index([userId, invitedAt])
