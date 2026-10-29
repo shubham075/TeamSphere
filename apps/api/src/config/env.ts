@@ -7,8 +7,8 @@ const bool = z
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  PORT: z.coerce.number().default(4600),
-  WEB_ORIGIN: z.string().url().default('http://localhost:3000'),
+  PORT: z.coerce.number().default(4000),
+  WEB_ORIGIN: z.string().url().default('http://localhost:4001'),
   DATABASE_URL: z.string().min(1),
   REDIS_URL: z.string().default('redis://localhost:6380'),
 
@@ -22,6 +22,13 @@ const envSchema = z.object({
   S3_ACCESS_KEY: z.string().min(1),
   S3_SECRET_KEY: z.string().min(1),
   S3_BUCKET: z.string().default('teamsphere'),
+
+  /** LiveKit server API (ws:// or http://), as reached from the API server. */
+  LIVEKIT_URL: z.string().default('ws://127.0.0.1:7880'),
+  /** LiveKit URL handed to browsers/desktop clients; defaults to LIVEKIT_URL (fine when both run on one host). */
+  LIVEKIT_PUBLIC_URL: z.string().optional(),
+  LIVEKIT_API_KEY: z.string().min(1),
+  LIVEKIT_API_SECRET: z.string().min(32),
 
   ENTRA_ENABLED: bool,
   ENTRA_TENANT_ID: z.string().optional(),
@@ -41,6 +48,13 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .default('true')
     .transform((v) => v === 'true'),
+
+  LINK_PREVIEWS_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+  /** Allow previews of intranet links (private IP ranges). Off by default so chat links can't probe internal services. */
+  LINK_PREVIEW_ALLOW_PRIVATE: bool,
 });
 
 export type Env = z.infer<typeof envSchema>;

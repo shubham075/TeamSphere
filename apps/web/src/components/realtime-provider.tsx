@@ -4,10 +4,11 @@ import { useQueryClient } from '@tanstack/react-query';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useMemo } from 'react';
 import {
-  ActivityItem, ConversationInfo, MessageInfo, PresenceEvent, ReactionEvent, ReadEvent, toPlainText, TypingEvent,
-  WS_EVENTS,
+  ActivityItem, ChatSectionInfo, ConversationInfo, MessageInfo, PresenceEvent, ReactionEvent, ReadEvent, toPlainText,
+  TypingEvent, UrgentReminderEvent, WS_EVENTS,
 } from '@teamsphere/shared';
 import { api } from '@/lib/api';
+import { bindCallEvents } from '@/lib/call-store';
 import { useAuth } from '@/lib/auth-store';
 import {
   conversationTitle, patchConversation, qk, removeConversation, setReactions, upsertConversation, upsertMessage,
@@ -15,6 +16,7 @@ import {
 } from '@/lib/chat';
 import { useChatUi } from '@/lib/chat-store';
 import { getDesktop } from '@/lib/desktop';
+import { isPopout } from '@/lib/popout';
 import { closeSocket, getSocket } from '@/lib/socket';
 
 const isViewing = (conversationId: string) =>
@@ -23,6 +25,7 @@ const isViewing = (conversationId: string) =>
 /** Debounced "mark as read" so a burst of incoming messages makes one request. */
 const readTimers = new Map<string, ReturnType<typeof setTimeout>>();
 export function scheduleMarkRead(conversationId: string) {
+  if (useChatUi.getState().readPausedFor === conversationId) return;
   clearTimeout(readTimers.get(conversationId));
   readTimers.set(
     conversationId,
@@ -33,7 +36,20 @@ export function scheduleMarkRead(conversationId: string) {
   );
 }
 
+/** Stops auto-marking a chat read (after "Mark as unread" while it's open) until `resumeMarkRead`. */
+export function pauseMarkRead(conversationId: string) {
+  clearTimeout(readTimers.get(conversationId));
+  readTimers.delete(conversationId);
+  useChatUi.getState().pauseRead(conversationId);
+}
+
+export function resumeMarkRead(conversationId: string) {
+  if (useChatUi.getState().readPausedFor === conversationId) useChatUi.getState().pauseRead(null);
+}
+
 function notifyDesktop(title: string, body: string, path: string) {
+  // The main window already notifies; a popped-out chat would only duplicate it.
+  if (isPopout()) return;
   const desktop = getDesktop();
   if (desktop) return desktop.notify({ title, body, path });
   if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
@@ -103,8 +119,12 @@ export function RealtimeProvider() {
       })),
     );
 
-    socket.on(WS_EVENTS.conversationUpdated, (c: ConversationInfo | { id: string; removed: true }) => {
-      if ('removed' in c) {
+    socket.on(WS_EVENTS.conversationUpdated, (c: ConversationInfo | { id: string; removed: true } | { sectionRemoved: string }) => {
+      if ('sectionRemoved' in c) {
+        qc.setQueryData<ConversationInfo[]>(qk.conversations, (list) =>
+          list?.map((x) => (x.sectionId === c.sectionRemoved ? { ...x, sectionId: null } : x)),
+        );
+      } else if ('removed' in c) {
         removeConversation(qc, c.id);
         if (useChatUi.getState().activeConversationId === c.id) router.replace('/chat');
       } else {
@@ -112,16 +132,29 @@ export function RealtimeProvider() {
       }
     });
 
+    socket.on(WS_EVENTS.sectionsUpdated, (sections: ChatSectionInfo[]) => qc.setQueryData(qk.sections, sections));
+    socket.on(WS_EVENTS.savedUpdated, () => void qc.invalidateQueries({ queryKey: qk.saved }));
+    socket.on(WS_EVENTS.scheduledUpdated, (e: { conversationId: string }) => void qc.invalidateQueries({ queryKey: qk.scheduled(e.conversationId) }));
+
+    socket.on(WS_EVENTS.messageUrgentReminder, (e: UrgentReminderEvent) => {
+      if (isViewing(e.conversationId)) return;
+      notifyDesktop(`URGENT: ${e.authorName}`, e.preview, `/chat/${e.conversationId}`);
+      getDesktop()?.flashFrame(true);
+    });
+
     socket.on(WS_EVENTS.typing, (e: TypingEvent) => addTyping(e.conversationId, e.userId, e.displayName));
 
     socket.on(WS_EVENTS.presenceChanged, (p: PresenceEvent) => {
       setPresence({ [p.userId]: p.status });
+      useChatUi.getState().setDetails(p.userId, { statusMessage: p.statusMessage, outOfOffice: p.outOfOffice });
       if (p.userId === me.id) void qc.invalidateQueries({ queryKey: ['me'] });
     });
 
     socket.on(WS_EVENTS.notificationNew, (n: ActivityItem) => {
       qc.setQueryData<ActivityItem[]>(qk.activity, (list) => (list ? [n, ...list.filter((x) => x.id !== n.id)] : list));
     });
+
+    bindCallEvents(socket, qc);
 
     const prune = setInterval(pruneTyping, 1000);
     return () => {
@@ -139,12 +172,15 @@ export function RealtimeProvider() {
   }, [conversations]);
 
   // Unread totals → window title + desktop taskbar badge.
-  const unreadChats = useMemo(() => conversations?.filter((c) => c.unread > 0 && !c.muted).length ?? 0, [conversations]);
+  const unreadChats = useMemo(
+    () => conversations?.filter((c) => (c.unread > 0 || c.markedUnread) && !c.muted).length ?? 0,
+    [conversations],
+  );
   const unreadActivity = useMemo(() => activity?.filter((a) => !a.read).length ?? 0, [activity]);
   const pathname = usePathname();
   useEffect(() => {
     const total = unreadChats + unreadActivity;
-    getDesktop()?.setUnreadCount(total);
+    if (!isPopout()) getDesktop()?.setUnreadCount(total);
     // Next.js resets <title> after each navigation, so reapply it once the new page has rendered.
     const t = setTimeout(() => {
       document.title = total ? `(${total}) TeamSphere` : 'TeamSphere';

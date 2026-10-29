@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { PresenceStatus } from './presence';
+import type { OutOfOfficeInfo, PresenceStatus } from './presence';
 
 export const QUICK_REACTIONS = ['👍', '❤️', '😆', '😮', '😢', '😡'] as const;
 export const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
@@ -49,20 +49,55 @@ export const memberSettingsSchema = z.object({
   muted: z.boolean().optional(),
   pinned: z.boolean().optional(),
   hidden: z.boolean().optional(),
+  /** Custom chat-list section ("folder"); null moves the chat back to Recent. */
+  sectionId: z.string().nullable().optional(),
 });
 export type MemberSettingsInput = z.infer<typeof memberSettingsSchema>;
 
+/** Without a message id the whole chat is flagged unread; with one, everything from that message on becomes unread. */
+export const markUnreadSchema = z.object({ messageId: z.string().optional() });
+export type MarkUnreadInput = z.infer<typeof markUnreadSchema>;
+
+export const chatSectionSchema = z.object({ name: z.string().trim().min(1).max(64) });
+export type ChatSectionInput = z.infer<typeof chatSectionSchema>;
+
+export const reorderSectionsSchema = z.object({ ids: z.array(z.string()).max(50) });
+export type ReorderSectionsInput = z.infer<typeof reorderSectionsSchema>;
+
+export const MAX_POLL_OPTIONS = 10;
+
+export const pollInputSchema = z.object({
+  question: z.string().trim().min(1).max(300),
+  options: z.array(z.string().trim().min(1).max(120)).min(2).max(MAX_POLL_OPTIONS),
+  multiple: z.boolean().default(false),
+});
+export type PollInput = z.input<typeof pollInputSchema>;
+
+export const votePollSchema = z.object({ options: z.array(z.number().int().min(0).max(MAX_POLL_OPTIONS - 1)).max(MAX_POLL_OPTIONS) });
+export type VotePollInput = z.infer<typeof votePollSchema>;
+
+const messageFields = {
+  body: z.string().max(28_000).default(''),
+  parentId: z.string().optional(),
+  importance: z.enum(['normal', 'important', 'urgent']).default('normal'),
+  attachmentIds: z.array(z.string()).max(10).default([]),
+};
+
 export const sendMessageSchema = z
   .object({
-    body: z.string().max(28_000).default(''),
-    parentId: z.string().optional(),
-    importance: z.enum(['normal', 'important', 'urgent']).default('normal'),
-    attachmentIds: z.array(z.string()).max(10).default([]),
+    ...messageFields,
+    poll: pollInputSchema.optional(),
     /** Client-generated id so the sender can match its optimistic message to the server copy. */
     clientId: z.string().max(64).optional(),
   })
-  .refine((m) => m.body.trim().length > 0 || m.attachmentIds.length > 0, { message: 'Message is empty' });
+  .refine((m) => m.body.trim().length > 0 || m.attachmentIds.length > 0 || !!m.poll, { message: 'Message is empty' });
 export type SendMessageInput = z.input<typeof sendMessageSchema>;
+
+/** Scheduled send: a minute to 90 days ahead (checked again on the server against its clock). */
+export const scheduleMessageSchema = z
+  .object({ ...messageFields, sendAt: z.iso.datetime() })
+  .refine((m) => m.body.trim().length > 0 || m.attachmentIds.length > 0, { message: 'Message is empty' });
+export type ScheduleMessageInput = z.input<typeof scheduleMessageSchema>;
 
 export const editMessageSchema = z.object({ body: z.string().trim().min(1).max(28_000) });
 export type EditMessageInput = z.infer<typeof editMessageSchema>;
@@ -75,6 +110,9 @@ export interface UserSummary {
   avatarUrl: string | null;
   jobTitle: string | null;
   presence: PresenceStatus;
+  /** Shown above the compose box when chatting with this person. */
+  statusMessage: string | null;
+  outOfOffice: OutOfOfficeInfo | null;
 }
 
 export interface AttachmentInfo {
@@ -90,6 +128,22 @@ export interface ReactionSummary {
   userIds: string[];
 }
 
+export interface PollInfo {
+  id: string;
+  question: string;
+  multiple: boolean;
+  options: { text: string; voterIds: string[] }[];
+  closedAt: string | null;
+}
+
+export interface LinkPreview {
+  url: string;
+  title: string;
+  description: string | null;
+  imageUrl: string | null;
+  siteName: string | null;
+}
+
 export interface MessageInfo {
   id: string;
   clientId?: string;
@@ -102,9 +156,34 @@ export interface MessageInfo {
   reactions: ReactionSummary[];
   attachments: AttachmentInfo[];
   mentionIds: string[];
+  poll: PollInfo | null;
+  linkPreview: LinkPreview | null;
   createdAt: string;
   editedAt: string | null;
   deletedAt: string | null;
+}
+
+export interface ScheduledMessageInfo {
+  id: string;
+  conversationId: string;
+  body: string;
+  importance: 'normal' | 'important' | 'urgent';
+  parentId: string | null;
+  attachmentCount: number;
+  sendAt: string;
+  createdAt: string;
+}
+
+export interface SavedMessageInfo {
+  message: MessageInfo;
+  conversationTitle: string | null;
+  savedAt: string;
+}
+
+export interface ChatSectionInfo {
+  id: string;
+  name: string;
+  position: number;
 }
 
 export interface ConversationMemberInfo {
@@ -120,9 +199,12 @@ export interface ConversationInfo {
   lastMessage: MessageInfo | null;
   lastMessageAt: string;
   unread: number;
+  /** "Mark as unread" on the whole chat; cleared when the chat is read. */
+  markedUnread: boolean;
   muted: boolean;
   pinned: boolean;
   hidden: boolean;
+  sectionId: string | null;
 }
 
 export interface MessagePage {
@@ -133,7 +215,7 @@ export interface MessagePage {
 
 export interface ActivityItem {
   id: string;
-  type: 'mention' | 'reply' | 'reaction' | import('./files').FileActivityType;
+  type: 'mention' | 'reply' | 'reaction' | 'missed_call' | 'voicemail' | import('./files').FileActivityType;
   actor: { id: string; displayName: string; avatarUrl: string | null } | null;
   conversationId: string | null;
   conversationTitle: string | null;
@@ -163,6 +245,13 @@ export interface ReactionEvent {
   reactions: ReactionSummary[];
 }
 
+export interface UrgentReminderEvent {
+  conversationId: string;
+  messageId: string;
+  authorName: string;
+  preview: string;
+}
+
 export interface MessageDeletedEvent {
   conversationId: string;
   messageId: string;
@@ -172,4 +261,5 @@ export interface PresenceEvent {
   userId: string;
   status: PresenceStatus;
   statusMessage: string | null;
+  outOfOffice: OutOfOfficeInfo | null;
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AccessNode, can, effectiveRole, nextVersion, personalLibraryRole, planRestore, planUpload, purgeCutoff, uniqueName,
+  AccessNode, can, channelLibraryRole, effectiveRole, nextVersion, personalLibraryRole, planRestore, planUpload, purgeCutoff, uniqueName,
 } from './files.logic';
 
 const OWNER = 'u-owner';
@@ -108,5 +108,19 @@ describe('helpers', () => {
   it('purges items deleted more than 93 days ago', () => {
     const now = new Date('2026-10-28T00:00:00Z');
     expect(purgeCutoff(now).toISOString()).toBe('2026-07-27T00:00:00.000Z');
+  });
+});
+
+describe('channel libraries', () => {
+  const base = { inChannel: true, teamRole: 'member' as const, channelRole: null, channelType: 'standard' as const, archived: false };
+  it('lets channel members edit and team owners manage standard channels', () => {
+    expect(channelLibraryRole(base)).toBe('edit');
+    expect(channelLibraryRole({ ...base, teamRole: 'owner' })).toBe('owner');
+    expect(channelLibraryRole({ ...base, inChannel: false, teamRole: 'owner' })).toBeNull();
+  });
+  it('uses channel ownership for private channels and makes archived channels read-only', () => {
+    expect(channelLibraryRole({ ...base, channelType: 'private', teamRole: 'owner', channelRole: 'member' })).toBe('edit');
+    expect(channelLibraryRole({ ...base, channelType: 'private', channelRole: 'owner' })).toBe('owner');
+    expect(channelLibraryRole({ ...base, teamRole: 'owner', archived: true })).toBe('view');
   });
 });

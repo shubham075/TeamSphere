@@ -1,6 +1,8 @@
 import { InfiniteData, QueryClient, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMemo } from 'react';
 import type {
-  ActivityItem, AttachmentInfo, ConversationInfo, CreateConversationInput, MessageInfo, MessagePage, ReactionSummary,
+  ActivityItem, AttachmentInfo, ChatSectionInfo, ConversationInfo, CreateConversationInput, MessageInfo, MessagePage,
+  PollInput, ReactionSummary, SavedMessageInfo, ScheduledMessageInfo,
 } from '@teamsphere/shared';
 import { api } from './api';
 import { useAuth } from './auth-store';
@@ -9,6 +11,9 @@ export const qk = {
   conversations: ['conversations'] as const,
   messages: (id: string) => ['messages', id] as const,
   activity: ['activity'] as const,
+  saved: ['saved'] as const,
+  sections: ['chat-sections'] as const,
+  scheduled: (conversationId: string) => ['scheduled', conversationId] as const,
 };
 
 type Pages = InfiniteData<MessagePage, string | null>;
@@ -41,6 +46,33 @@ export function useActivity() {
   return useQuery({ queryKey: qk.activity, queryFn: () => api<ActivityItem[]>('/activity'), enabled: signedIn });
 }
 
+export function useSaved() {
+  const signedIn = useAuth((s) => s.status === 'signed-in');
+  return useQuery({ queryKey: qk.saved, queryFn: () => api<SavedMessageInfo[]>('/saved'), enabled: signedIn });
+}
+
+/** Ids of messages I've saved, for the bookmark state on each message. */
+export function useSavedIds() {
+  const { data } = useSaved();
+  return useMemo(() => new Set(data?.map((s) => s.message.id)), [data]);
+}
+
+export function useSections() {
+  const signedIn = useAuth((s) => s.status === 'signed-in');
+  return useQuery({ queryKey: qk.sections, queryFn: () => api<ChatSectionInfo[]>('/chat-sections'), enabled: signedIn });
+}
+
+export function useScheduled(conversationId: string) {
+  return useQuery({
+    queryKey: qk.scheduled(conversationId),
+    queryFn: () => api<ScheduledMessageInfo[]>(`/conversations/${conversationId}/scheduled`),
+  });
+}
+
+export function searchMessages(conversationId: string, q: string) {
+  return api<MessageInfo[]>(`/conversations/${conversationId}/search?q=${encodeURIComponent(q)}`);
+}
+
 // ------------------------------------------------------------------ mutations
 
 export function useCreateConversation() {
@@ -54,7 +86,14 @@ export function useCreateConversation() {
 export function useSendMessage(conversationId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { body: string; parentId?: string; importance?: MessageInfo['importance']; attachments?: AttachmentInfo[]; clientId: string }) =>
+    mutationFn: (input: {
+      body: string;
+      parentId?: string;
+      importance?: MessageInfo['importance'];
+      attachments?: AttachmentInfo[];
+      poll?: PollInput;
+      clientId: string;
+    }) =>
       api<MessageInfo>(`/conversations/${conversationId}/messages`, {
         method: 'POST',
         json: {
@@ -62,6 +101,7 @@ export function useSendMessage(conversationId: string) {
           parentId: input.parentId,
           importance: input.importance ?? 'normal',
           attachmentIds: input.attachments?.map((a) => a.id) ?? [],
+          poll: input.poll,
           clientId: input.clientId,
         },
       }),
@@ -79,6 +119,10 @@ export function useSendMessage(conversationId: string) {
         reactions: [],
         attachments: input.attachments ?? [],
         mentionIds: [],
+        poll: input.poll
+          ? { id: 'pending', question: input.poll.question, multiple: !!input.poll.multiple, options: input.poll.options.map((text) => ({ text, voterIds: [] })), closedAt: null }
+          : null,
+        linkPreview: null,
         createdAt: new Date().toISOString(),
         editedAt: null,
         deletedAt: null,
@@ -121,10 +165,105 @@ export function useToggleReaction() {
 export function useMemberSettings(conversationId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { muted?: boolean; pinned?: boolean; hidden?: boolean }) =>
+    mutationFn: (input: { muted?: boolean; pinned?: boolean; hidden?: boolean; sectionId?: string | null }) =>
       api<ConversationInfo>(`/conversations/${conversationId}/me`, { method: 'PATCH', json: input }),
     onSuccess: (c) => upsertConversation(qc, c),
   });
+}
+
+export function useMarkUnread() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ conversationId, messageId }: { conversationId: string; messageId?: string }) =>
+      api<ConversationInfo>(`/conversations/${conversationId}/unread`, { method: 'POST', json: { messageId } }),
+    onSuccess: (c) => upsertConversation(qc, c),
+  });
+}
+
+export function useSetSaved() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ message, saved }: { message: MessageInfo; saved: boolean }) =>
+      api(`/messages/${message.id}/saved`, { method: saved ? 'PUT' : 'DELETE' }),
+    onMutate: ({ message, saved }) => applySaved(qc, message, saved),
+    onError: (_e, { message, saved }) => applySaved(qc, message, !saved),
+  });
+}
+
+/** Optimistically adds/removes a message in the saved list (the full list is refetched on realtime events). */
+export function applySaved(qc: QueryClient, message: MessageInfo, saved: boolean) {
+  qc.setQueryData<SavedMessageInfo[]>(qk.saved, (list) => {
+    if (!list) return list;
+    const rest = list.filter((s) => s.message.id !== message.id);
+    return saved ? [{ message, conversationTitle: null, savedAt: new Date().toISOString() }, ...rest] : rest;
+  });
+}
+
+export function useVote() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ messageId, options }: { messageId: string; options: number[] }) =>
+      api<MessageInfo>(`/messages/${messageId}/poll/vote`, { method: 'PUT', json: { options } }),
+    onSuccess: (m) => upsertMessage(qc, m),
+  });
+}
+
+export function useClosePoll() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (messageId: string) => api<MessageInfo>(`/messages/${messageId}/poll/close`, { method: 'POST' }),
+    onSuccess: (m) => upsertMessage(qc, m),
+  });
+}
+
+export function useSectionMutations() {
+  const qc = useQueryClient();
+  const set = (sections: ChatSectionInfo[]) => qc.setQueryData(qk.sections, sections);
+  return {
+    create: useMutation({ mutationFn: (name: string) => api<ChatSectionInfo[]>('/chat-sections', { method: 'POST', json: { name } }), onSuccess: set }),
+    rename: useMutation({
+      mutationFn: ({ id, name }: { id: string; name: string }) => api<ChatSectionInfo[]>(`/chat-sections/${id}`, { method: 'PATCH', json: { name } }),
+      onSuccess: set,
+    }),
+    remove: useMutation({
+      mutationFn: (id: string) => api<ChatSectionInfo[]>(`/chat-sections/${id}`, { method: 'DELETE' }),
+      onSuccess: (sections, id) => {
+        set(sections);
+        qc.setQueryData<ConversationInfo[]>(qk.conversations, (list) => list?.map((c) => (c.sectionId === id ? { ...c, sectionId: null } : c)));
+      },
+    }),
+    reorder: useMutation({
+      mutationFn: (ids: string[]) => api<ChatSectionInfo[]>('/chat-sections/order', { method: 'PUT', json: { ids } }),
+      onSuccess: set,
+    }),
+  };
+}
+
+export function useScheduleMessage(conversationId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { body: string; parentId?: string; importance: MessageInfo['importance']; attachments: AttachmentInfo[]; sendAt: string }) =>
+      api<ScheduledMessageInfo>(`/conversations/${conversationId}/scheduled`, {
+        method: 'POST',
+        json: { body: input.body, parentId: input.parentId, importance: input.importance, attachmentIds: input.attachments.map((a) => a.id), sendAt: input.sendAt },
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.scheduled(conversationId) }),
+  });
+}
+
+export function useScheduledActions(conversationId: string) {
+  const qc = useQueryClient();
+  const refresh = () => qc.invalidateQueries({ queryKey: qk.scheduled(conversationId) });
+  return {
+    cancel: useMutation({ mutationFn: (id: string) => api(`/scheduled/${id}`, { method: 'DELETE' }), onSuccess: refresh }),
+    sendNow: useMutation({
+      mutationFn: (id: string) => api<MessageInfo>(`/scheduled/${id}/send`, { method: 'POST' }),
+      onSuccess: (m) => {
+        upsertMessage(qc, m);
+        void refresh();
+      },
+    }),
+  };
 }
 
 export async function uploadAttachment(conversationId: string, file: File): Promise<AttachmentInfo> {

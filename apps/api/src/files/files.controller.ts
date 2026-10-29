@@ -16,12 +16,20 @@ import {
 import { AuthUser, CurrentUser, Public } from '../common/auth.decorators';
 import { ZodPipe } from '../common/zod.pipe';
 import { StorageService } from '../infra/storage';
-import { FilesService, UploadedContent } from './files.service';
+import { FilesService, Library, UploadedContent } from './files.service';
 
 const upload = FileInterceptor('file', { storage: diskStorage({ destination: tmpdir() }), limits: { fileSize: MAX_FILE_BYTES, files: 1 } });
 const INLINE_TYPES = /^(image\/(png|jpe?g|gif|webp|bmp)|video\/(mp4|webm|ogg)|audio\/|application\/pdf$|text\/plain$)/;
 
 const ctx = (req: Request) => ({ ip: req.ip ?? null });
+
+/** `?library=channel:<id>` targets a channel's document library at its root; omitted = the caller's My files. */
+function library(value: string | undefined): Library | undefined {
+  if (!value) return undefined;
+  const [ownerType, ownerId] = value.split(':');
+  if (ownerType !== 'channel' || !ownerId) throw new BadRequestException('Unknown library');
+  return { ownerType, ownerId };
+}
 
 /** Multer temp file → storage, with a usable UTF-8 name (browsers send multipart filenames as latin1). */
 function content(file: Express.Multer.File | undefined, storage: StorageService): UploadedContent {
@@ -45,8 +53,8 @@ export class FilesController {
   ) {}
 
   @Get('folder')
-  folder(@CurrentUser() me: AuthUser, @Query('id') id?: string) {
-    return this.files.listFolder(me.id, id || null);
+  folder(@CurrentUser() me: AuthUser, @Query('id') id?: string, @Query('library') lib?: string) {
+    return this.files.listFolder(me.id, id || null, library(lib));
   }
 
   @Get('shared')
@@ -81,15 +89,21 @@ export class FilesController {
   }
 
   @Post('folders')
-  createFolder(@CurrentUser() me: AuthUser, @Req() req: Request, @Body(new ZodPipe(createFolderSchema)) body: CreateFolderInput) {
-    return this.files.createFolder(me.id, body, ctx(req));
+  createFolder(@CurrentUser() me: AuthUser, @Req() req: Request, @Body(new ZodPipe(createFolderSchema)) body: CreateFolderInput, @Query('library') lib?: string) {
+    return this.files.createFolder(me.id, body, ctx(req), library(lib));
   }
 
   @Post('upload')
   @UseInterceptors(upload)
-  async upload(@CurrentUser() me: AuthUser, @Req() req: Request, @Query('parentId') parentId?: string, @UploadedFile() file?: Express.Multer.File) {
+  async upload(
+    @CurrentUser() me: AuthUser,
+    @Req() req: Request,
+    @Query('parentId') parentId?: string,
+    @Query('library') lib?: string,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
     try {
-      return await this.files.upload(me.id, parentId || null, content(file, this.storage), ctx(req));
+      return await this.files.upload(me.id, parentId || null, content(file, this.storage), ctx(req), library(lib));
     } finally {
       if (file) await unlink(file.path).catch(() => undefined);
     }
@@ -106,13 +120,13 @@ export class FilesController {
   }
 
   @Post('items/:id/move')
-  move(@CurrentUser() me: AuthUser, @Req() req: Request, @Param('id') id: string, @Body(new ZodPipe(moveFileSchema)) body: MoveFileInput) {
-    return this.files.move(me.id, id, body.parentId, ctx(req));
+  move(@CurrentUser() me: AuthUser, @Req() req: Request, @Param('id') id: string, @Body(new ZodPipe(moveFileSchema)) body: MoveFileInput, @Query('library') lib?: string) {
+    return this.files.move(me.id, id, body.parentId, ctx(req), library(lib));
   }
 
   @Post('items/:id/copy')
-  copy(@CurrentUser() me: AuthUser, @Req() req: Request, @Param('id') id: string, @Body(new ZodPipe(moveFileSchema)) body: MoveFileInput) {
-    return this.files.copy(me.id, id, body.parentId, ctx(req));
+  copy(@CurrentUser() me: AuthUser, @Req() req: Request, @Param('id') id: string, @Body(new ZodPipe(moveFileSchema)) body: MoveFileInput, @Query('library') lib?: string) {
+    return this.files.copy(me.id, id, body.parentId, ctx(req), library(lib));
   }
 
   @Delete('items/:id')

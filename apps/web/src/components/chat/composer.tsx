@@ -1,17 +1,23 @@
 'use client';
 
 import clsx from 'clsx';
-import { AlertCircle, Bold, Code, Italic, Loader2, Paperclip, Send, Smile, X } from 'lucide-react';
+import { AlertCircle, BarChart3, Bold, Code, Italic, Loader2, Mic, Paperclip, Plane, Send, Smile, X } from 'lucide-react';
 import { forwardRef, KeyboardEvent, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import {
-  AttachmentInfo, ConversationInfo, MAX_ATTACHMENT_BYTES, MENTION_PATTERN, MessageInfo, toPlainText, WS_EVENTS,
+  AttachmentInfo, ConversationInfo, MAX_ATTACHMENT_BYTES, MENTION_PATTERN, MessageInfo, PollInput, toPlainText, WS_EVENTS,
 } from '@teamsphere/shared';
 import { Avatar } from '@/components/avatar';
+import { resumeMarkRead } from '@/components/realtime-provider';
 import { ApiError } from '@/lib/api';
-import { formatBytes, uploadAttachment, useEditMessage, useSendMessage } from '@/lib/chat';
+import { formatBytes, otherMember, uploadAttachment, useEditMessage, useScheduleMessage, useSendMessage } from '@/lib/chat';
+import { usePresenceDetails } from '@/lib/chat-store';
 import { getSocket } from '@/lib/socket';
 import { useDismiss } from '@/lib/use-dismiss';
 import { EmojiGrid } from './emoji-grid';
+import { PollDialog } from './poll-dialog';
+import { formatWhen, ScheduleMenu } from './schedule-menu';
+import { ScheduledBar } from './scheduled-bar';
+import { VoiceRecorder } from './voice-recorder';
 
 interface PendingFile {
   key: string;
@@ -64,6 +70,12 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
 ) {
   const send = useSendMessage(conversation.id);
   const edit = useEditMessage();
+  const schedule = useScheduleMessage(conversation.id);
+  const [pollOpen, setPollOpen] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const other = conversation.type === 'direct' ? otherMember(conversation, meId) : undefined;
+  const otherDetails = usePresenceDetails(other?.id, { statusMessage: other?.statusMessage ?? null, outOfOffice: other?.outOfOffice ?? null });
   const [text, setText] = useState('');
   const [mentions, setMentions] = useState<{ name: string; id: string }[]>([]);
   const [files, setFiles] = useState<PendingFile[]>([]);
@@ -208,8 +220,42 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
       attachments: ready,
       clientId: crypto.randomUUID(),
     });
+    resumeMarkRead(conversation.id);
     reset();
     onCancelReply();
+  }
+
+  async function scheduleFor(when: Date) {
+    const body = encodeMentions(text.trim(), mentions);
+    if ((!body && !ready.length) || uploading) return;
+    try {
+      await schedule.mutateAsync({ body, parentId: replyTo?.id, importance, attachments: ready, sendAt: when.toISOString() });
+      reset();
+      onCancelReply();
+      setNotice(`Scheduled for ${formatWhen(when)}`);
+      setTimeout(() => setNotice(null), 4000);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not schedule the message');
+    }
+  }
+
+  function sendPoll(poll: PollInput) {
+    send.mutate({ body: '', poll, importance: 'normal', clientId: crypto.randomUUID() });
+    resumeMarkRead(conversation.id);
+    setPollOpen(false);
+  }
+
+  /** Voice clips are sent straight away as an audio attachment. */
+  async function sendVoiceClip(file: File) {
+    setRecording(false);
+    try {
+      const info = await uploadAttachment(conversation.id, file);
+      send.mutate({ body: '', attachments: [info], importance: 'normal', parentId: replyTo?.id, clientId: crypto.randomUUID() });
+      resumeMarkRead(conversation.id);
+      onCancelReply();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not send the voice clip');
+    }
   }
 
   function reset() {
@@ -247,7 +293,29 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
   const canSend = editing ? !!text.trim() : (!!text.trim() || ready.length > 0) && !uploading;
 
   return (
-    <div className="px-4 pt-1 pb-4 md:px-6">
+    <div className="pt-1 pb-4">
+      <ScheduledBar conversationId={conversation.id} />
+      <div className="px-4 md:px-6">
+      {other && (otherDetails.outOfOffice || otherDetails.statusMessage) && (
+        <div className="mb-1 flex items-start gap-2 rounded-md bg-surface-2 px-3 py-1.5 text-xs" role="status">
+          {otherDetails.outOfOffice ? (
+            <>
+              <Plane size={14} className="mt-0.5 shrink-0 text-fuchsia-500" aria-hidden />
+              <span>
+                <span className="font-semibold">
+                  {other.displayName} is out of office
+                  {otherDetails.outOfOffice.until && ` until ${new Date(otherDetails.outOfOffice.until).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}`}
+                </span>
+                {otherDetails.outOfOffice.message && <span className="text-muted">: {otherDetails.outOfOffice.message}</span>}
+              </span>
+            </>
+          ) : (
+            <span>
+              <span className="font-semibold">{other.displayName.split(' ')[0]}:</span> <span className="text-muted">{otherDetails.statusMessage}</span>
+            </span>
+          )}
+        </div>
+      )}
       <div className={clsx('relative rounded-lg border bg-surface shadow-sm', editing ? 'border-brand' : 'border-border focus-within:border-brand')}>
         {(replyTo || editing) && (
           <div className="flex items-start gap-2 border-b border-border px-3 py-2 text-xs">
@@ -315,6 +383,10 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
         )}
 
         <div className="flex items-center gap-0.5 px-1.5 pb-1.5">
+          {recording ? (
+            <VoiceRecorder onDone={(f) => void sendVoiceClip(f)} onCancel={() => setRecording(false)} onError={setError} />
+          ) : (
+          <>
           <button onClick={() => wrapSelection('**')} title="Bold (Ctrl+B)" aria-label="Bold" className="rounded p-1.5 text-muted hover:bg-surface-hover hover:text-text">
             <Bold size={16} />
           </button>
@@ -365,17 +437,29 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
                 <option value="important">Important</option>
                 <option value="urgent">Urgent</option>
               </select>
+              <button onClick={() => setPollOpen(true)} title="Poll" aria-label="Create a poll" className="rounded p-1.5 text-muted hover:bg-surface-hover hover:text-text">
+                <BarChart3 size={16} />
+              </button>
+              <button onClick={() => setRecording(true)} title="Record a voice clip" aria-label="Record a voice clip" className="rounded p-1.5 text-muted hover:bg-surface-hover hover:text-text">
+                <Mic size={16} />
+              </button>
             </>
           )}
           {error && <span className="ml-2 truncate text-xs text-danger">{error}</span>}
-          <button
-            onClick={() => void submit()}
-            disabled={!canSend}
-            aria-label={editing ? 'Save' : 'Send'}
-            className="ml-auto rounded-md p-1.5 text-brand hover:bg-brand-soft disabled:text-muted disabled:hover:bg-transparent"
-          >
-            <Send size={18} />
-          </button>
+          {notice && !error && <span className="ml-2 truncate text-xs text-brand" role="status">{notice}</span>}
+          <span className="ml-auto flex items-center gap-0.5">
+            {!editing && <ScheduleMenu disabled={!canSend || schedule.isPending} onSchedule={(w) => void scheduleFor(w)} />}
+            <button
+              onClick={() => void submit()}
+              disabled={!canSend}
+              aria-label={editing ? 'Save' : 'Send'}
+              className="rounded-md p-1.5 text-brand hover:bg-brand-soft disabled:text-muted disabled:hover:bg-transparent"
+            >
+              <Send size={18} />
+            </button>
+          </span>
+          </>
+          )}
         </div>
 
         {candidates.length > 0 && (
@@ -399,6 +483,8 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer(
           </ul>
         )}
       </div>
+      </div>
+      {pollOpen && <PollDialog onClose={() => setPollOpen(false)} onCreate={sendPoll} />}
     </div>
   );
 });

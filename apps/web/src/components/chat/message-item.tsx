@@ -1,13 +1,17 @@
 'use client';
 
 import clsx from 'clsx';
-import { AlertCircle, Copy, CornerUpLeft, FileText, Loader2, MoreHorizontal, Pencil, SmilePlus, Trash2 } from 'lucide-react';
+import {
+  AlertCircle, Bookmark, BookmarkCheck, Copy, CornerUpLeft, EyeOff, FileText, Loader2, MoreHorizontal, Pencil,
+  SmilePlus, Trash2,
+} from 'lucide-react';
 import { memo, useRef, useState } from 'react';
-import { MessageInfo, QUICK_REACTIONS, toPlainText } from '@teamsphere/shared';
+import { LinkPreview, MessageInfo, QUICK_REACTIONS, toPlainText } from '@teamsphere/shared';
 import { Avatar } from '@/components/avatar';
-import { formatBytes, useDeleteMessage, useToggleReaction } from '@/lib/chat';
+import { formatBytes, useDeleteMessage, useMarkUnread, useSetSaved, useToggleReaction } from '@/lib/chat';
 import { useDismiss } from '@/lib/use-dismiss';
 import { EmojiGrid } from './emoji-grid';
+import { PollCard } from './poll-card';
 import { RichText } from './rich-text';
 
 export type LocalMessage = MessageInfo & { pending?: boolean; failed?: boolean };
@@ -19,18 +23,45 @@ interface Props {
   showHeader: boolean;
   seenLabel?: string | null;
   highlighted?: boolean;
+  saved?: boolean;
   onReply: (m: MessageInfo) => void;
   onEdit: (m: MessageInfo) => void;
   onJumpTo: (id: string) => void;
+  /** Called after "Mark as unread" so the chat stops marking itself read while still open. */
+  onMarkedUnread?: () => void;
   nameOf: (userId: string) => string;
 }
 
 const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
-function MessageItemImpl({ message: m, meId, showHeader, seenLabel, highlighted, onReply, onEdit, onJumpTo, nameOf }: Props) {
+function LinkPreviewCard({ preview }: { preview: LinkPreview }) {
+  return (
+    <a
+      href={preview.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="mt-2 flex max-w-md overflow-hidden rounded-md border border-border bg-surface not-italic hover:bg-surface-hover"
+    >
+      {preview.imageUrl && (
+        // External image: no referrer so the linked site doesn't learn which chat it was viewed in.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={preview.imageUrl} alt="" referrerPolicy="no-referrer" loading="lazy" className="h-auto w-24 shrink-0 object-cover" />
+      )}
+      <span className="min-w-0 p-2.5">
+        {preview.siteName && <span className="block truncate text-[11px] text-muted uppercase">{preview.siteName}</span>}
+        <span className="line-clamp-2 block text-sm font-semibold text-brand">{preview.title}</span>
+        {preview.description && <span className="line-clamp-2 block text-xs text-muted">{preview.description}</span>}
+      </span>
+    </a>
+  );
+}
+
+function MessageItemImpl({ message: m, meId, showHeader, seenLabel, highlighted, saved, onReply, onEdit, onJumpTo, onMarkedUnread, nameOf }: Props) {
   const mine = m.author?.id === meId;
   const react = useToggleReaction();
   const del = useDeleteMessage();
+  const setSaved = useSetSaved();
+  const markUnread = useMarkUnread();
   const [menu, setMenu] = useState<'none' | 'more' | 'emoji'>('none');
   const menuRef = useRef<HTMLDivElement>(null);
   useDismiss(menuRef, menu !== 'none', () => setMenu('none'));
@@ -106,10 +137,17 @@ function MessageItemImpl({ message: m, meId, showHeader, seenLabel, highlighted,
 
           {deleted ? 'This message has been deleted.' : m.body && <RichText body={m.body} meId={meId} />}
 
+          {m.poll && <PollCard message={m} poll={m.poll} meId={meId} nameOf={nameOf} disabled={!!m.pending || !!m.failed} />}
+
+          {m.linkPreview && <LinkPreviewCard preview={m.linkPreview} />}
+
           {m.attachments.length > 0 && (
             <div className={clsx('flex flex-col gap-1.5', m.body && 'mt-2')}>
               {m.attachments.map((a) =>
-                a.mimeType.startsWith('image/') ? (
+                a.mimeType.startsWith('audio/') ? (
+                  // Voice clips and other audio play inline.
+                  <audio key={a.id} src={a.url} controls preload="metadata" aria-label={a.fileName} className="h-10 w-64 max-w-full" />
+                ) : a.mimeType.startsWith('image/') ? (
                   <a key={a.id} href={a.url} target="_blank" rel="noopener noreferrer" className="block">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={a.url} alt={a.fileName} className="max-h-72 max-w-full rounded-md border border-border object-contain" />
@@ -134,6 +172,9 @@ function MessageItemImpl({ message: m, meId, showHeader, seenLabel, highlighted,
           )}
 
           {m.editedAt && !deleted && <span className="ml-2 text-[11px] text-muted">Edited</span>}
+          {saved && !deleted && (
+            <BookmarkCheck size={13} className="absolute -top-1.5 -right-1.5 text-brand" aria-label="Saved" />
+          )}
         </div>
 
         {m.reactions.length > 0 && (
@@ -207,6 +248,27 @@ function MessageItemImpl({ message: m, meId, showHeader, seenLabel, highlighted,
               >
                 <Copy size={14} /> Copy text
               </button>
+              <button
+                onClick={() => {
+                  setSaved.mutate({ message: m, saved: !saved });
+                  setMenu('none');
+                }}
+                className="flex w-full items-center gap-2 px-3 py-1.5 hover:bg-surface-hover"
+              >
+                {saved ? <BookmarkCheck size={14} /> : <Bookmark size={14} />} {saved ? 'Unsave' : 'Save this message'}
+              </button>
+              {!mine && (
+                <button
+                  onClick={() => {
+                    markUnread.mutate({ conversationId: m.conversationId, messageId: m.id });
+                    onMarkedUnread?.();
+                    setMenu('none');
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 hover:bg-surface-hover"
+                >
+                  <EyeOff size={14} /> Mark as unread
+                </button>
+              )}
               {mine && (
                 <>
                   <button

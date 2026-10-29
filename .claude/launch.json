@@ -4,27 +4,78 @@
     {
       "name": "api",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--dir", "apps/api", "dev"],
-      "port": 4600
+      "runtimeArgs": [
+        "--dir",
+        "apps/api",
+        "dev"
+      ],
+      "port": 4000
     },
     {
       "name": "web",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--dir", "apps/web", "dev"],
-      "port": 3000
+      "runtimeArgs": [
+        "--dir",
+        "apps/web",
+        "dev"
+      ],
+      "port": 4001
+    },
+    {
+      "name": "api-calls",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--dir",
+        "apps/api",
+        "dev"
+      ],
+      "port": 4002
+    },
+    {
+      "name": "web-calls",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--dir",
+        "apps/web",
+        "exec",
+        "next",
+        "dev",
+        "--port",
+        "4003"
+      ],
+      "port": 4003,
+      "env": {
+        "API_URL": "http://127.0.0.1:4002",
+        "NEXT_PUBLIC_SOCKET_PORT": "4002"
+      }
     },
     {
       "name": "api-files",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--dir", "apps/api", "dev"],
-      "port": 4630
+      "runtimeArgs": [
+        "--dir",
+        "apps/api",
+        "dev"
+      ],
+      "port": 4006
     },
     {
       "name": "web-files",
       "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["--dir", "apps/web", "exec", "next", "dev", "--port", "3130"],
-      "env": { "API_URL": "http://127.0.0.1:4630", "NEXT_PUBLIC_SOCKET_PORT": "4630" },
-      "port": 3130
+      "runtimeArgs": [
+        "--dir",
+        "apps/web",
+        "exec",
+        "next",
+        "dev",
+        "--port",
+        "4007"
+      ],
+      "port": 4007,
+      "env": {
+        "API_URL": "http://127.0.0.1:4006",
+        "NEXT_PUBLIC_SOCKET_PORT": "4006"
+      }
     }
   ]
 }

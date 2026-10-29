@@ -64,13 +64,17 @@ export class FilesService implements OnModuleInit, OnModuleDestroy {
 
   // ------------------------------------------------------------------ browsing
 
-  async listFolder(me: string, folderId: string | null): Promise<FolderListing> {
+  async listFolder(me: string, folderId: string | null, library?: Library): Promise<FolderListing> {
     if (!folderId) {
+      const lib = library ?? { ownerType: 'user', ownerId: me };
+      const role = await this.libraries.roleFor(me, lib.ownerType, lib.ownerId);
+      if (!can(role, 'read')) throw new NotFoundException('Library not found');
       const rows = await this.prisma.fileItem.findMany({
-        where: { ownerType: 'user', ownerId: me, parentId: null, deletedAt: null },
+        where: { ownerType: lib.ownerType, ownerId: lib.ownerId, parentId: null, deletedAt: null },
         include: this.childInclude(me),
       });
-      return { root: 'my', folder: null, breadcrumbs: [{ id: null, name: 'My files' }], role: 'owner', items: await this.presentChildren(me, rows, 'owner') };
+      const name = (await this.libraries.label(lib.ownerType, lib.ownerId)) ?? 'My files';
+      return { root: 'my', folder: null, breadcrumbs: [{ id: null, name }], role: role!, items: await this.presentChildren(me, rows, role!) };
     }
     const access = await this.require(me, folderId, 'read');
     if (access.item.kind !== 'folder') throw new BadRequestException('Not a folder');
@@ -78,7 +82,7 @@ export class FilesService implements OnModuleInit, OnModuleDestroy {
     const libraryRole = await this.libraries.roleFor(me, access.item.ownerType, access.item.ownerId);
     const [folder] = await this.present([access.item], () => access.role!);
     return {
-      root: libraryRole === 'owner' ? 'my' : 'shared',
+      root: libraryRole ? 'my' : 'shared',
       folder,
       breadcrumbs: await this.breadcrumbs(me, access, libraryRole),
       role: access.role!,
@@ -163,7 +167,10 @@ export class FilesService implements OnModuleInit, OnModuleDestroy {
       )
       SELECT id FROM "FileItem"
       WHERE "deletedAt" IS NULL AND name ILIKE ${pattern}
-        AND (("ownerType" = 'user' AND "ownerId" = ${me}) OR id IN (SELECT id FROM tree))
+        AND (("ownerType" = 'user' AND "ownerId" = ${me}) OR id IN (SELECT id FROM tree)
+          OR ("ownerType" = 'channel' AND "ownerId" IN (
+            SELECT c.id FROM "Channel" c JOIN "ConversationMember" m ON m."conversationId" = c."conversationId"
+            WHERE m."userId" = ${me} AND c."deletedAt" IS NULL)))
       ORDER BY "modifiedAt" DESC
       LIMIT 50`;
     const found: { item: FileItem; role: FileRole }[] = [];
@@ -239,8 +246,8 @@ export class FilesService implements OnModuleInit, OnModuleDestroy {
 
   // ------------------------------------------------------------------ creating and versions
 
-  async createFolder(me: string, input: CreateFolderInput, ctx: Ctx): Promise<FileItemInfo> {
-    const target = await this.target(me, input.parentId);
+  async createFolder(me: string, input: CreateFolderInput, ctx: Ctx, library?: Library): Promise<FileItemInfo> {
+    const target = await this.target(me, input.parentId, library);
     if (await this.sibling(target, input.name)) throw NAME_CLASH(input.name);
     const folder = await this.prisma.fileItem.create({
       data: { ...target.library, parentId: target.parentId, kind: 'folder', name: input.name, createdById: me, modifiedById: me },
@@ -251,8 +258,8 @@ export class FilesService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Upload into a folder. A file with the same name there gets a new version instead of a duplicate. */
-  async upload(me: string, parentId: string | null, file: UploadedContent, ctx: Ctx): Promise<FileItemInfo & { versioned: boolean }> {
-    const target = await this.target(me, parentId);
+  async upload(me: string, parentId: string | null, file: UploadedContent, ctx: Ctx, library?: Library): Promise<FileItemInfo & { versioned: boolean }> {
+    const target = await this.target(me, parentId, library);
     const existing = await this.sibling(target, file.name);
     const plan = planUpload(existing);
     if (plan === 'conflict') throw NAME_CLASH(file.name);
@@ -361,10 +368,10 @@ export class FilesService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Move within the same library (moving between libraries is a copy, as in other document libraries). */
-  async move(me: string, id: string, parentId: string | null, ctx: Ctx): Promise<FileItemInfo> {
+  async move(me: string, id: string, parentId: string | null, ctx: Ctx, library?: Library): Promise<FileItemInfo> {
     const access = await this.require(me, id, 'write');
     const { item } = access;
-    const target = await this.target(me, parentId);
+    const target = await this.target(me, parentId, library ?? (parentId ? undefined : { ownerType: item.ownerType, ownerId: item.ownerId }));
     if (target.library.ownerType !== item.ownerType || target.library.ownerId !== item.ownerId) {
       throw new BadRequestException('Items can only be moved within the same library. Use “Copy to” instead.');
     }
@@ -379,9 +386,9 @@ export class FilesService implements OnModuleInit, OnModuleDestroy {
     return (await this.present([updated], () => access.role!))[0];
   }
 
-  async copy(me: string, id: string, parentId: string | null, ctx: Ctx): Promise<FileItemInfo> {
+  async copy(me: string, id: string, parentId: string | null, ctx: Ctx, library?: Library): Promise<FileItemInfo> {
     const { item } = await this.require(me, id, 'read');
-    const target = await this.target(me, parentId);
+    const target = await this.target(me, parentId, library);
     if (item.kind === 'folder' && target.parentId && (await this.descendantIds(id)).includes(target.parentId)) {
       throw new BadRequestException('A folder can’t be copied into itself');
     }
@@ -684,8 +691,13 @@ export class FilesService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Destination folder for new items: a folder the caller can edit, or the root of their own library. */
-  private async target(me: string, parentId: string | null): Promise<{ library: Library; parentId: string | null; role: FileRole }> {
-    if (!parentId) return { library: { ownerType: 'user', ownerId: me }, parentId: null, role: 'owner' };
+  private async target(me: string, parentId: string | null, library?: Library): Promise<{ library: Library; parentId: string | null; role: FileRole }> {
+    if (!parentId) {
+      const lib = library ?? { ownerType: 'user', ownerId: me };
+      const role = await this.libraries.roleFor(me, lib.ownerType, lib.ownerId);
+      if (!can(role, 'write')) throw new ForbiddenException('You can’t add files here');
+      return { library: lib, parentId: null, role: role! };
+    }
     const access = await this.require(me, parentId, 'write');
     if (access.item.kind !== 'folder') throw new BadRequestException('Not a folder');
     return { library: { ownerType: access.item.ownerType, ownerId: access.item.ownerId }, parentId, role: access.role! };
@@ -741,7 +753,7 @@ export class FilesService implements OnModuleInit, OnModuleDestroy {
     for (const id of [...itemIds, ...parentIds].filter((x): x is string => !!x)) {
       const item = await this.prisma.fileItem.findUnique({ where: { id }, select: { ownerType: true, ownerId: true } });
       if (!item) continue;
-      for (const m of await this.libraries.managers(item.ownerType, item.ownerId)) audience.add(m);
+      for (const m of await this.libraries.audience(item.ownerType, item.ownerId)) audience.add(m);
       const chain = await this.prisma.$queryRaw<{ id: string }[]>`
         WITH RECURSIVE chain AS (
           SELECT id, "parentId" FROM "FileItem" WHERE id = ${id}
@@ -831,7 +843,8 @@ export class FilesService implements OnModuleInit, OnModuleDestroy {
   /** Path from the top-most folder the caller can open down to the item's parent (plus the item if a folder). */
   private async breadcrumbs(me: string, access: Access, libraryRole: FileRole | null): Promise<FileCrumb[]> {
     const top = [...access.chain].reverse(); // root folder first
-    const crumbs: FileCrumb[] = [{ id: null, name: libraryRole === 'owner' ? 'My files' : 'Shared with me' }];
+    const label = await this.libraries.label(access.item.ownerType, access.item.ownerId);
+    const crumbs: FileCrumb[] = [{ id: null, name: libraryRole ? (label ?? 'My files') : 'Shared with me' }];
     let reachable = libraryRole !== null;
     const grants: AccessNode[] = [];
     for (const c of top) {
@@ -848,8 +861,15 @@ export class FilesService implements OnModuleInit, OnModuleDestroy {
     const parents = await this.prisma.fileItem.findMany({ where: { id: { in: parentIds } }, select: { id: true, name: true } });
     const names = new Map(parents.map((p) => [p.id, p.name]));
     const owners = await this.people(items.filter((i) => i.ownerType === 'user' && i.ownerId !== me).map((i) => i.ownerId));
+    const labels = new Map<string, string | null>();
+    for (const i of items) if (i.ownerType !== 'user' && !labels.has(i.ownerId)) labels.set(i.ownerId, await this.libraries.label(i.ownerType, i.ownerId));
     return items.map((i) => {
-      const root = i.ownerType === 'user' && i.ownerId === me ? 'My files' : `${owners.get(i.ownerId)?.displayName ?? 'Someone'}’s files`;
+      const root =
+        i.ownerType !== 'user'
+          ? (labels.get(i.ownerId) ?? 'Library')
+          : i.ownerId === me
+            ? 'My files'
+            : `${owners.get(i.ownerId)?.displayName ?? 'Someone'}’s files`;
       return i.parentId ? `${root} / ${names.get(i.parentId) ?? '…'}` : root;
     });
   }
@@ -885,6 +905,6 @@ export class FilesService implements OnModuleInit, OnModuleDestroy {
   }
 }
 
-type Library = { ownerType: FileOwnerType; ownerId: string };
+export type Library = { ownerType: FileOwnerType; ownerId: string };
 
 const avatar = (u: { id: string; avatarKey: string | null }) => (u.avatarKey ? `/api/users/${u.id}/avatar` : null);

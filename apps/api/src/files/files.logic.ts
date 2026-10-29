@@ -48,6 +48,24 @@ export function personalLibraryRole(userId: string, ownerType: string, ownerId: 
   return ownerType === 'user' && ownerId === userId ? 'owner' : null;
 }
 
+/**
+ * Channel document library role. Only people who can open the channel get in; team owners manage standard
+ * channels' files, private/shared channel owners manage theirs (team owners outside a private channel get nothing).
+ * Archived channels are read-only.
+ */
+export function channelLibraryRole(c: {
+  inChannel: boolean;
+  teamRole: 'owner' | 'member' | 'guest' | null;
+  channelRole: 'owner' | 'member' | null;
+  channelType: 'standard' | 'private' | 'shared';
+  archived: boolean;
+}): FileRole | null {
+  if (!c.inChannel) return null;
+  if (c.archived) return 'view';
+  const manager = c.channelType === 'standard' ? c.teamRole === 'owner' : c.channelRole === 'owner';
+  return manager ? 'owner' : 'edit';
+}
+
 export type FileAction =
   | 'read' // list, preview, download, version history, copy elsewhere
   | 'write' // upload, new version, rename, move, delete to recycle bin, restore a version
