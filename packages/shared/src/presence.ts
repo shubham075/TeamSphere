@@ -41,8 +41,38 @@ export const setStatusMessageSchema = z.object({
 });
 export type SetStatusMessageInput = z.infer<typeof setStatusMessageSchema>;
 
+/** Out of office: on now (no start) or scheduled, until an optional end; others see the message in chat. */
+export const outOfOfficeSchema = z
+  .object({
+    enabled: z.boolean(),
+    message: z.string().trim().max(1000).nullable().optional(),
+    startAt: z.iso.datetime().nullable().optional(),
+    endAt: z.iso.datetime().nullable().optional(),
+  })
+  .refine((v) => !v.startAt || !v.endAt || v.startAt < v.endAt, { message: 'The end must be after the start' });
+export type OutOfOfficeInput = z.infer<typeof outOfOfficeSchema>;
+
+export interface OutOfOfficeInfo {
+  message: string | null;
+  until: string | null;
+}
+
+/** The owner's own out-of-office settings (including a schedule that hasn't started yet). */
+export interface OutOfOfficeSettings {
+  enabled: boolean;
+  message: string | null;
+  startAt: string | null;
+  endAt: string | null;
+}
+
 export interface PresenceInfo {
   userId: string;
   status: PresenceStatus;
   statusMessage: string | null;
+  /** When the status message clears itself; null = never. */
+  statusExpiresAt: string | null;
+  /** When a manually picked status resets to automatic; null = never. */
+  presenceExpiresAt: string | null;
+  /** Set while out of office is active. */
+  outOfOffice: OutOfOfficeInfo | null;
 }

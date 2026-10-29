@@ -4,7 +4,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import { Monitor, Moon, Sun } from 'lucide-react';
 import { FormEvent, useEffect, useState } from 'react';
-import type { DesktopSettings, PublicUser, SessionInfo, UpdateProfileInput, UpdateStatus } from '@teamsphere/shared';
+import type {
+  DesktopSettings, OutOfOfficeSettings, PublicUser, SessionInfo, UpdateProfileInput, UpdateStatus,
+} from '@teamsphere/shared';
 import { Avatar } from '@/components/avatar';
 import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth-store';
@@ -167,6 +169,7 @@ function ProfileSettings({ me }: { me: Me }) {
                 ? `Signed in with ${me.authProvider === 'entra' ? 'Microsoft Entra ID' : 'the company directory'}. Directory fields refresh at each sign-in.`
                 : 'TeamSphere account'}
             </p>
+            <AvatarControls me={me} />
           </div>
         </div>
         <form
@@ -195,8 +198,137 @@ function ProfileSettings({ me }: { me: Me }) {
           )}
         </form>
       </Card>
+      <OutOfOfficeCard />
       {!directory && <PasswordCard />}
     </>
+  );
+}
+
+function AvatarControls({ me }: { me: Me }) {
+  const qc = useQueryClient();
+  const setUser = useAuth((s) => s.setUser);
+  const apply = (user: PublicUser) => {
+    setUser(user);
+    qc.setQueryData<Me>(['me'], (old) => (old ? { ...old, ...user } : old));
+    // Avatars appear in chat lists and messages too.
+    void qc.invalidateQueries({ queryKey: ['conversations'] });
+  };
+  const upload = useMutation({
+    mutationFn: (file: File) => {
+      const form = new FormData();
+      form.append('file', file);
+      return api<PublicUser>('/users/me/avatar', { method: 'PUT', body: form });
+    },
+    onSuccess: apply,
+  });
+  const remove = useMutation({ mutationFn: () => api<PublicUser>('/users/me/avatar', { method: 'DELETE' }), onSuccess: apply });
+
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-3 text-sm">
+      <label className="cursor-pointer font-semibold text-brand hover:underline focus-within:underline">
+        {upload.isPending ? 'Uploading…' : me.avatarUrl ? 'Change picture' : 'Upload picture'}
+        <input
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/webp"
+          className="sr-only"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) upload.mutate(file);
+            e.target.value = '';
+          }}
+        />
+      </label>
+      {me.avatarUrl && (
+        <button onClick={() => remove.mutate()} className="text-muted hover:text-danger hover:underline">
+          Remove
+        </button>
+      )}
+      <Notice error={errorText(upload.error ?? remove.error)} />
+    </div>
+  );
+}
+
+/** Value for <input type="datetime-local"> from an ISO string, in local time. */
+const toLocalInput = (iso: string | null) =>
+  iso ? new Date(new Date(iso).getTime() - new Date(iso).getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : '';
+
+function OutOfOfficeCard() {
+  const qc = useQueryClient();
+  const { data } = useQuery({ queryKey: ['out-of-office'], queryFn: () => api<OutOfOfficeSettings>('/users/me/out-of-office') });
+  const [form, setForm] = useState({ enabled: false, message: '', scheduled: false, startAt: '', endAt: '' });
+  useEffect(() => {
+    if (data) {
+      setForm({
+        enabled: data.enabled,
+        message: data.message ?? '',
+        scheduled: !!(data.startAt || data.endAt),
+        startAt: toLocalInput(data.startAt),
+        endAt: toLocalInput(data.endAt),
+      });
+    }
+  }, [data]);
+
+  const save = useMutation({
+    mutationFn: () =>
+      api<OutOfOfficeSettings>('/users/me/out-of-office', {
+        method: 'PUT',
+        json: {
+          enabled: form.enabled,
+          message: form.message.trim() || null,
+          startAt: form.scheduled && form.startAt ? new Date(form.startAt).toISOString() : null,
+          endAt: form.scheduled && form.endAt ? new Date(form.endAt).toISOString() : null,
+        },
+      }),
+    onSuccess: (s) => {
+      qc.setQueryData(['out-of-office'], s);
+      void qc.invalidateQueries({ queryKey: ['me'] });
+    },
+  });
+
+  return (
+    <Card title="Out of office">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          save.mutate();
+        }}
+        className="space-y-4"
+      >
+        <Toggle
+          label="Turn on automatic replies"
+          hint="People who message you see that you're away, and get your message as a reply once a day."
+          checked={form.enabled}
+          onChange={(v) => setForm((f) => ({ ...f, enabled: v }))}
+        />
+        <label className="flex flex-col gap-1 text-sm">
+          <span className="font-medium">Message</span>
+          <textarea
+            value={form.message}
+            onChange={(e) => setForm((f) => ({ ...f, message: e.target.value }))}
+            maxLength={1000}
+            rows={3}
+            placeholder="I'm away until Monday. For urgent matters contact…"
+            className="rounded-md border border-border bg-surface px-3 py-2 outline-none focus:border-brand"
+          />
+        </label>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={form.scheduled} onChange={(e) => setForm((f) => ({ ...f, scheduled: e.target.checked }))} className="accent-brand" />
+          Only during a time period
+        </label>
+        {form.scheduled && (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="Start" type="datetime-local" value={form.startAt} onChange={(v) => setForm((f) => ({ ...f, startAt: v }))} />
+            <Field label="End" type="datetime-local" value={form.endAt} onChange={(v) => setForm((f) => ({ ...f, endAt: v }))} />
+          </div>
+        )}
+        <div className="flex items-center gap-4">
+          <button disabled={save.isPending} className="rounded-md bg-brand px-4 py-2 text-sm font-semibold text-brand-text hover:bg-brand-hover disabled:opacity-60">
+            Save
+          </button>
+          <Notice error={errorText(save.error)} ok={save.isSuccess ? 'Saved' : null} />
+        </div>
+      </form>
+    </Card>
   );
 }
 

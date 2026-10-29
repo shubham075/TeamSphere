@@ -4,12 +4,13 @@ import { ArrowDown, Loader2, Upload } from 'lucide-react';
 import { useParams } from 'next/navigation';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ConversationInfo, MessageInfo } from '@teamsphere/shared';
+import { ChatSearchPanel } from '@/components/chat/chat-search-panel';
 import { Composer, ComposerHandle } from '@/components/chat/composer';
 import { ConversationHeader } from '@/components/chat/conversation-header';
 import { LocalMessage, MessageItem } from '@/components/chat/message-item';
-import { scheduleMarkRead } from '@/components/realtime-provider';
+import { pauseMarkRead, resumeMarkRead, scheduleMarkRead } from '@/components/realtime-provider';
 import { useAuth } from '@/lib/auth-store';
-import { conversationTitle, useConversation, useMessages } from '@/lib/chat';
+import { conversationTitle, useConversation, useMessages, useSavedIds } from '@/lib/chat';
 import { useChatUi } from '@/lib/chat-store';
 
 const GROUP_GAP_MS = 5 * 60 * 1000;
@@ -48,6 +49,8 @@ function ConversationView({ conversation, meId }: { conversation: ConversationIn
   const [atBottom, setAtBottom] = useState(true);
   const [dragging, setDragging] = useState(false);
   const [highlight, setHighlight] = useState<string | null>(null);
+  const [searching, setSearching] = useState(false);
+  const savedIds = useSavedIds();
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<ComposerHandle>(null);
   const prevHeight = useRef<number | null>(null);
@@ -66,6 +69,7 @@ function ConversationView({ conversation, meId }: { conversation: ConversationIn
     document.addEventListener('visibilitychange', markIfVisible);
     return () => {
       useChatUi.getState().setActive(null);
+      resumeMarkRead(id);
       window.removeEventListener('focus', markIfVisible);
       document.removeEventListener('visibilitychange', markIfVisible);
     };
@@ -112,6 +116,20 @@ function ConversationView({ conversation, meId }: { conversation: ConversationIn
     }
   }, []);
 
+  /** Search results may be older than what's loaded: page back until the message is in the DOM (bounded). */
+  const jumpToLoading = useCallback(
+    async (messageId: string) => {
+      for (let i = 0; i < 40 && !document.getElementById(`msg-${messageId}`); i++) {
+        const res = await fetchNextPage();
+        if (!res.hasNextPage) break;
+      }
+      requestAnimationFrame(() => jumpTo(messageId));
+    },
+    [fetchNextPage, jumpTo],
+  );
+
+  const onMarkedUnread = useCallback(() => pauseMarkRead(id), [id]);
+
   // "Seen" under my latest message, from other members' read positions.
   const seen = useMemo(() => {
     const lastMine = [...messages].reverse().find((m) => m.author?.id === meId && m.type === 'text' && !m.id.startsWith('temp-'));
@@ -152,8 +170,10 @@ function ConversationView({ conversation, meId }: { conversation: ConversationIn
         composerRef.current?.addFiles([...e.dataTransfer.files]);
       }}
     >
-      <ConversationHeader conversation={conversation} meId={meId} />
+      <ConversationHeader conversation={conversation} meId={meId} searching={searching} onToggleSearch={() => setSearching((s) => !s)} />
 
+      <div className="flex min-h-0 flex-1">
+      <div className="flex min-w-0 flex-1 flex-col">
       <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto pt-4 pb-2" role="log" aria-live="polite">
         {isFetchingNextPage && (
           <div className="flex justify-center py-2">
@@ -198,9 +218,11 @@ function ConversationView({ conversation, meId }: { conversation: ConversationIn
                 showHeader={showHeader}
                 seenLabel={seen?.id === m.id ? seen.label : null}
                 highlighted={highlight === m.id}
+                saved={savedIds.has(m.id)}
                 onReply={onReply}
                 onEdit={onEdit}
                 onJumpTo={jumpTo}
+                onMarkedUnread={onMarkedUnread}
                 nameOf={nameOf}
               />
             </Fragment>
@@ -232,6 +254,11 @@ function ConversationView({ conversation, meId }: { conversation: ConversationIn
         onDoneEditing={() => setEditing(null)}
         placeholder={conversation.type === 'self' ? 'Write a note to yourself' : 'Type a message'}
       />
+      </div>
+      {searching && (
+        <ChatSearchPanel conversationId={id} meId={meId} onClose={() => setSearching(false)} onPick={(mid) => void jumpToLoading(mid)} />
+      )}
+      </div>
 
       {dragging && (
         <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-brand/10 ring-4 ring-brand ring-inset">
