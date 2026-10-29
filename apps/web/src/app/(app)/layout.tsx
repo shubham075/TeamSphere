@@ -5,6 +5,7 @@ import { useEffect } from 'react';
 import { CallManager } from '@/components/calls/call-manager';
 import { DesktopIntegration } from '@/components/desktop-integration';
 import { RealtimeProvider } from '@/components/realtime-provider';
+import { FilesRealtime } from '@/components/files/files-realtime';
 import { TeamsRealtime } from '@/components/teams/teams-realtime';
 import { AppRail } from '@/components/shell/app-rail';
 import { TitleBar } from '@/components/shell/title-bar';
@@ -35,6 +36,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <div className="flex h-full flex-col">
         <RealtimeProvider />
         <TeamsRealtime />
+        <FilesRealtime />
         <main className="flex min-h-0 min-w-0 flex-1">{children}</main>
       </div>
     );
@@ -46,6 +48,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <RealtimeProvider />
       <CallManager />
       <TeamsRealtime />
+      <FilesRealtime />
       <TitleBar />
       <div className="flex min-h-0 flex-1">
         <AppRail />

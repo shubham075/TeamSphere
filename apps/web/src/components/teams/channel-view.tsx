@@ -10,6 +10,7 @@ import { api, ApiError } from '@/lib/api';
 import { formatBytes } from '@/lib/chat';
 import { useChatUi } from '@/lib/chat-store';
 import { markChannelRead, tk, useChannelSettings, usePosts, useSaveNotes } from '@/lib/teams';
+import { FileBrowser } from '@/components/files/file-browser';
 import { ChannelComposer } from './channel-composer';
 import { ChannelSettingsDialog } from './dialogs';
 import { PostCard } from './post-card';
@@ -176,14 +177,30 @@ function PostsTab({ team, channel, meId }: { team: TeamInfo; channel: ChannelInf
   );
 }
 
+/** The channel's document library (Files app, ownerType "channel"), plus attachments from its posts. */
 function FilesTab({ channel }: { channel: ChannelInfo }) {
+  const [folderId, setFolderId] = useState<string | null>(null);
+  const [showPosts, setShowPosts] = useState(false);
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex justify-end px-6 pt-2">
+        <button onClick={() => setShowPosts((v) => !v)} aria-pressed={showPosts} className="text-xs text-brand hover:underline">
+          {showPosts ? 'Back to document library' : 'Files from posts'}
+        </button>
+      </div>
+      {showPosts ? <PostFiles channel={channel} /> : <FileBrowser key={channel.id} library={`channel:${channel.id}`} folderId={folderId} onNavigate={setFolderId} />}
+    </div>
+  );
+}
+
+function PostFiles({ channel }: { channel: ChannelInfo }) {
   const { data, isLoading } = useQuery({
     queryKey: tk.files(channel.id),
     queryFn: () => api<(AttachmentInfo & { uploadedBy: string; createdAt: string })[]>(`/channels/${channel.id}/files`),
   });
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-6">
-      <p className="mb-3 text-xs text-muted">Files shared in this channel’s posts. A full document library arrives with Files (phase 6).</p>
+      <p className="mb-3 text-xs text-muted">Files attached to this channel’s posts.</p>
       {isLoading && <Loader2 className="animate-spin text-muted" />}
       {!isLoading && !data?.length && <p className="text-sm text-muted">No files yet.</p>}
       <table className="w-full max-w-4xl text-sm">
