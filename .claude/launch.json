@@ -12,6 +12,19 @@
       "runtimeExecutable": "pnpm",
       "runtimeArgs": ["--dir", "apps/web", "dev"],
       "port": 3000
+    },
+    {
+      "name": "api-files",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--dir", "apps/api", "dev"],
+      "port": 4630
+    },
+    {
+      "name": "web-files",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["--dir", "apps/web", "exec", "next", "dev", "--port", "3130"],
+      "env": { "API_URL": "http://127.0.0.1:4630", "NEXT_PUBLIC_SOCKET_PORT": "4630" },
+      "port": 3130
     }
   ]
 }

@@ -53,6 +53,12 @@ export class StorageService implements OnModuleInit {
     return { body: res.Body as Readable, contentType: res.ContentType, size: res.ContentLength };
   }
 
+  /** Partial read for HTTP Range requests (video/audio seeking). `range` is an HTTP Range header value. */
+  async getRange(key: string, range: string) {
+    const res = await this.s3.send(new GetObjectCommand({ Bucket: this.bucket, Key: key, Range: range }));
+    return { body: res.Body as Readable, contentRange: res.ContentRange, size: res.ContentLength };
+  }
+
   async remove(key: string) {
     await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key })).catch(() => undefined);
   }

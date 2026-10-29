@@ -133,7 +133,7 @@ export interface MessagePage {
 
 export interface ActivityItem {
   id: string;
-  type: 'mention' | 'reply' | 'reaction';
+  type: 'mention' | 'reply' | 'reaction' | import('./files').FileActivityType;
   actor: { id: string; displayName: string; avatarUrl: string | null } | null;
   conversationId: string | null;
   conversationTitle: string | null;

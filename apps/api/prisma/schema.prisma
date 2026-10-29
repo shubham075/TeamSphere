@@ -246,3 +246,148 @@ model Notification {
 
   @@index([userId, createdAt])
 }
+
+// ---------------------------------------------------------------- Phase 6: files
+// User ids below are plain columns without relations: libraries can belong to users, teams or channels, and
+// keeping this block free of back-relations on User lets it merge independently of other modules.
+
+enum FileOwnerType {
+  user
+  team
+  channel
+}
+
+enum FileItemKind {
+  file
+  folder
+}
+
+enum FileShareRole {
+  view
+  edit
+}
+
+enum FileAccessRequestStatus {
+  pending
+  approved
+  denied
+}
+
+/// A file or folder in a library identified by (ownerType, ownerId): a user's "My files", a team or a channel.
+model FileItem {
+  id           String        @id @default(cuid())
+  ownerType    FileOwnerType
+  ownerId      String
+  /// Null at the library root.
+  parentId     String?
+  parent       FileItem?     @relation("FileTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children     FileItem[]    @relation("FileTree")
+  kind         FileItemKind
+  name         String
+  /// Current version's content (files only); every version, including the current one, is in FileVersion.
+  mimeType     String?
+  size         Int           @default(0)
+  version      Int           @default(1)
+  storageKey   String?
+  createdById  String?
+  modifiedById String?
+  createdAt    DateTime      @default(now())
+  modifiedAt   DateTime      @default(now())
+  /// Soft delete. Set on the deleted item and all its descendants with the same timestamp, so restoring
+  /// brings back exactly what was deleted together.
+  deletedAt    DateTime?
+  deletedById  String?
+  /// True only on the item the user deleted: the recycle bin lists these.
+  inRecycleBin Boolean       @default(false)
+
+  versions FileVersion[]
+  shares   FileShare[]
+  links    ShareLink[]
+  requests FileAccessRequest[]
+  recents  FileRecent[]
+
+  @@index([ownerType, ownerId, parentId])
+  @@index([parentId])
+  @@index([inRecycleBin, deletedAt])
+}
+
+model FileVersion {
+  id          String   @id @default(cuid())
+  fileId      String
+  file        FileItem @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  version     Int
+  /// Restoring an old version adds a new version pointing at the same object, so keys are not unique.
+  storageKey  String
+  size        Int
+  mimeType    String
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  @@unique([fileId, version])
+}
+
+/// Specific-people sharing. Sharing a folder grants the same access to everything inside it.
+model FileShare {
+  id          String        @id @default(cuid())
+  itemId      String
+  item        FileItem      @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  userId      String
+  role        FileShareRole
+  createdById String?
+  createdAt   DateTime      @default(now())
+
+  @@unique([itemId, userId])
+  @@index([userId])
+}
+
+/// "People in your organization with the link". Anyone signed in who opens the link gets `role`.
+model ShareLink {
+  id          String         @id @default(cuid())
+  itemId      String
+  item        FileItem       @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  token       String         @unique
+  role        FileShareRole
+  createdById String?
+  createdAt   DateTime       @default(now())
+  revokedAt   DateTime?
+  uses        ShareLinkUse[]
+
+  @@index([itemId])
+}
+
+/// Who has opened a link: lists the item under "Shared with me". Access ends when the link is revoked.
+model ShareLinkUse {
+  linkId    String
+  link      ShareLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  userId    String
+  firstUsed DateTime  @default(now())
+
+  @@id([linkId, userId])
+  @@index([userId])
+}
+
+model FileAccessRequest {
+  id          String                  @id @default(cuid())
+  itemId      String
+  item        FileItem                @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  requesterId String
+  role        FileShareRole
+  message     String?
+  status      FileAccessRequestStatus @default(pending)
+  decidedById String?
+  decidedAt   DateTime?
+  createdAt   DateTime                @default(now())
+
+  @@index([itemId, status])
+  @@index([requesterId])
+}
+
+model FileRecent {
+  userId     String
+  itemId     String
+  item       FileItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  accessedAt DateTime @default(now())
+
+  @@id([userId, itemId])
+  @@index([userId, accessedAt])
+}
