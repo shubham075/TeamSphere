@@ -18,4 +18,4 @@ logging:
 webhook:
   api_key: devkey
   urls:
-    - http://host.docker.internal:4600/api/calls/livekit-webhook
+    - http://host.docker.internal:4000/api/calls/livekit-webhook
