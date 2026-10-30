@@ -6,3 +6,4 @@ export * from './chat';
 export * from './calls';
 export * from './teams';
 export * from './files';
+export * from './meetings';

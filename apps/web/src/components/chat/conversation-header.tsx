@@ -21,6 +21,7 @@ import { useCallStore } from '@/lib/call-store';
 import { ConversationAvatar } from './conversation-avatar';
 import { AddPeopleDialog } from './add-people-dialog';
 import { NewChatDialog } from './new-chat-dialog';
+import { MeetNowButton } from '@/components/meetings/meet-now-button';
 
 interface HeaderProps {
   conversation: ConversationInfo;
@@ -95,6 +96,7 @@ export function ConversationHeader({ conversation: c, meId, searching, onToggleS
       </div>
 
       <div ref={menuRef} className="relative flex items-center gap-1">
+        {c.type !== 'self' && <MeetNowButton conversationId={c.id} />}
         {c.type !== 'self' &&
           (running ? (
             <button

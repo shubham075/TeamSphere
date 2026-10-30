@@ -6,6 +6,7 @@ import { CallManager } from '@/components/calls/call-manager';
 import { DesktopIntegration } from '@/components/desktop-integration';
 import { RealtimeProvider } from '@/components/realtime-provider';
 import { FilesRealtime } from '@/components/files/files-realtime';
+import { MeetingsRealtime } from '@/components/meetings/meetings-realtime';
 import { TeamsRealtime } from '@/components/teams/teams-realtime';
 import { AppRail } from '@/components/shell/app-rail';
 import { TitleBar } from '@/components/shell/title-bar';
@@ -49,6 +50,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <CallManager />
       <TeamsRealtime />
       <FilesRealtime />
+      <MeetingsRealtime />
       <TitleBar />
       <div className="flex min-h-0 flex-1">
         <AppRail />

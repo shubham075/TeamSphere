@@ -8,13 +8,14 @@ import type {
   DesktopSettings, OutOfOfficeSettings, PublicUser, SessionInfo, UpdateProfileInput, UpdateStatus,
 } from '@teamsphere/shared';
 import { Avatar } from '@/components/avatar';
+import { WorkingHoursCard } from '@/components/meetings/working-hours-card';
 import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth-store';
 import { getDesktop } from '@/lib/desktop';
 import { Me, useMe } from '@/lib/presence';
 import { getThemePref, setThemePref, ThemePref } from '@/lib/theme';
 
-const SECTIONS = ['General', 'Profile', 'Privacy & devices', 'Desktop app', 'Administration'] as const;
+const SECTIONS = ['General', 'Profile', 'Calendar', 'Privacy & devices', 'Desktop app', 'Administration'] as const;
 type Section = (typeof SECTIONS)[number];
 
 export default function SettingsPage() {
@@ -50,6 +51,7 @@ export default function SettingsPage() {
         <div className="mx-auto max-w-2xl space-y-8">
           {section === 'General' && <GeneralSettings />}
           {section === 'Profile' && <ProfileSettings me={me} />}
+          {section === 'Calendar' && <WorkingHoursCard />}
           {section === 'Privacy & devices' && <DeviceSettings me={me} />}
           {section === 'Desktop app' && <DesktopAppSettings />}
           {section === 'Administration' && <AdminUsers />}

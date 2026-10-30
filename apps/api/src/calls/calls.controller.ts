@@ -86,6 +86,7 @@ export class CallsController {
       throw new UnauthorizedException('Invalid webhook signature');
     });
     await this.calls.onWebhook(event);
+    await this.livekit.dispatch(event);
     return { ok: true };
   }
 

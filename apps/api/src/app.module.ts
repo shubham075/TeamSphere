@@ -14,6 +14,7 @@ import { ChatModule } from './chat/chat.module';
 import { CallsModule } from './calls/calls.module';
 import { TeamsModule } from './teams/teams.module';
 import { FilesModule } from './files/files.module';
+import { MeetingsModule } from './meetings/meetings.module';
 import { AccessTokenGuard, RolesGuard } from './common/guards';
 import { Public } from './common/auth.decorators';
 
@@ -45,6 +46,7 @@ class HealthController {
     CallsModule,
     TeamsModule,
     FilesModule,
+    MeetingsModule,
   ],
   controllers: [HealthController],
   providers: [

@@ -15,5 +15,6 @@ import { LinkPreviewService } from './link-preview.service';
     SectionsController, ScheduledController,
   ],
   providers: [ChatService, LinkPreviewService, ChatScheduler],
+  exports: [ChatService],
 })
 export class ChatModule {}

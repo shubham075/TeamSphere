@@ -215,7 +215,7 @@ export interface MessagePage {
 
 export interface ActivityItem {
   id: string;
-  type: 'mention' | 'reply' | 'reaction' | 'missed_call' | 'voicemail' | import('./files').FileActivityType;
+  type: 'mention' | 'reply' | 'reaction' | 'missed_call' | 'voicemail' | 'meeting_invite' | 'meeting_updated' | 'meeting_cancelled' | 'meeting_rsvp' | import('./files').FileActivityType;
   actor: { id: string; displayName: string; avatarUrl: string | null } | null;
   conversationId: string | null;
   conversationTitle: string | null;

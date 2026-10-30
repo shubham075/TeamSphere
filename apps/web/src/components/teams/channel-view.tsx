@@ -16,6 +16,7 @@ import { ChannelSettingsDialog } from './dialogs';
 import { PostCard } from './post-card';
 import { setActiveChannel } from './teams-realtime';
 import { ChannelIcon, primaryButton, secondaryButton } from './ui';
+import { MeetNowButton } from '@/components/meetings/meet-now-button';
 
 type Tab = 'posts' | 'files' | 'notes';
 
@@ -53,6 +54,7 @@ export function ChannelView({ team, channel, meId }: { team: TeamInfo; channel: 
             </span>
           )}
           <span className="flex-1" />
+          {!channel.archivedAt && <MeetNowButton channelId={channel.id} />}
           <button
             onClick={() => prefs.mutate({ muted: !channel.muted })}
             aria-label={channel.muted ? 'Turn notifications on' : 'Mute channel'}

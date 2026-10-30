@@ -558,6 +558,36 @@ export class ChatService {
     });
   }
 
+  // ------------------------------------------------------------------ meeting chats (Phase 5)
+
+  /**
+   * Creates or updates a meeting's group chat so its members include `userIds` (people are only added, never
+   * removed, so the chat history stays with everyone who was ever invited). Returns the conversation id.
+   */
+  async syncMeetingChat(actorId: string, conversationId: string | null, title: string, userIds: string[]): Promise<string> {
+    const ids = [...new Set([actorId, ...userIds])];
+    if (!conversationId) {
+      const conversation = await this.prisma.conversation.create({
+        data: { type: 'group', title, createdById: actorId, members: { create: ids.map((userId) => ({ userId, lastReadAt: new Date() })) } },
+      });
+      await this.systemMessage(conversation.id, actorId, `{actor} scheduled "${title}".`);
+      await this.emitConversation(conversation.id, actorId);
+      return conversation.id;
+    }
+    const existing = new Set(await this.memberIds(conversationId));
+    const added = ids.filter((id) => !existing.has(id));
+    if (added.length) {
+      await this.prisma.conversationMember.createMany({ data: added.map((userId) => ({ conversationId, userId, lastReadAt: new Date() })), skipDuplicates: true });
+      await this.emitConversation(conversationId, actorId);
+    }
+    return conversationId;
+  }
+
+  /** A system line in a chat ("{actor}" is replaced with the actor's name). */
+  postSystemMessage(conversationId: string, actorId: string, template: string) {
+    return this.systemMessage(conversationId, actorId, template);
+  }
+
   // ------------------------------------------------------------------ helpers
 
   private async notify(userId: string, type: ActivityItem['type'], actorId: string, conversationId: string, messageId: string, preview: string) {

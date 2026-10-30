@@ -8,5 +8,6 @@ import { LivekitService } from './livekit.service';
   imports: [PresenceModule],
   controllers: [CallsController, VoicemailsController],
   providers: [CallsService, LivekitService],
+  exports: [LivekitService],
 })
 export class CallsModule {}

@@ -772,3 +772,109 @@ model FileRecent {
   @@id([userId, itemId])
   @@index([userId, accessedAt])
 }
+
+// ---------------------------------------------------------------- Phase 5a: meetings & calendar
+// Like the files block, user ids are plain columns (no back-relations on User) so this block merges on its own.
+// The meeting chat is a regular group Conversation (or the chat a "Meet now" started from).
+
+enum MeetingRole {
+  organizer
+  coorganizer
+  presenter
+  attendee
+}
+
+enum MeetingRsvp {
+  none
+  accepted
+  tentative
+  declined
+}
+
+model Meeting {
+  id             String    @id @default(cuid())
+  organizerId    String
+  title          String
+  description    String    @default("")
+  location       String    @default("")
+  /// First occurrence; for a series every occurrence lasts endAt - startAt.
+  startAt        DateTime
+  endAt          DateTime
+  /// IANA zone the recurrence is expanded in (so "9:00 every Monday" survives DST).
+  timeZone       String    @default("UTC")
+  /// Recurrence rule (shared `recurrenceSchema`), null for a single meeting.
+  recurrence     Json?
+  /// Per-occurrence overrides keyed by the original start ISO: { cancelled?, startAt?, endAt?, rsvp? }.
+  exceptions     Json      @default("{}")
+  joinCode       String    @unique
+  options        Json      @default("{}")
+  conversationId String
+  channelId      String?
+  /// meeting | webinar | townhall | appointment (only meeting for now).
+  kind           String    @default("meeting")
+  isInstant      Boolean   @default(false)
+  cancelledAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  attendees MeetingAttendee[]
+  sessions  MeetingSession[]
+
+  @@index([conversationId])
+  @@index([startAt])
+}
+
+model MeetingAttendee {
+  meetingId       String
+  meeting         Meeting     @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  userId          String
+  role            MeetingRole @default(attendee)
+  required        Boolean     @default(true)
+  rsvp            MeetingRsvp @default(none)
+  rsvpNote        String?
+  proposedStartAt DateTime?
+  proposedEndAt   DateTime?
+  createdAt       DateTime    @default(now())
+
+  @@id([meetingId, userId])
+  @@index([userId])
+}
+
+/// One time people were in the meeting room (one per occurrence that someone joined). Lobby/hands live in memory.
+model MeetingSession {
+  id              String    @id @default(cuid())
+  meetingId       String
+  meeting         Meeting   @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  occurrenceStart DateTime
+  roomName        String    @unique
+  locked          Boolean   @default(false)
+  startedAt       DateTime  @default(now())
+  endedAt         DateTime?
+
+  attendance MeetingAttendance[]
+
+  @@index([meetingId, endedAt])
+}
+
+/// One join → leave interval of one user (rejoining adds a row). Fed by LiveKit webhooks and room polling.
+model MeetingAttendance {
+  id        String         @id @default(cuid())
+  sessionId String
+  session   MeetingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  userId    String
+  role      MeetingRole
+  joinedAt  DateTime       @default(now())
+  leftAt    DateTime?
+
+  @@index([sessionId, userId])
+}
+
+model WorkingHours {
+  userId      String   @id
+  timeZone    String
+  /// Weekdays, 0 = Sunday.
+  days        Int[]
+  startMinute Int
+  endMinute   Int
+  updatedAt   DateTime @updatedAt
+}

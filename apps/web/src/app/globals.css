@@ -82,3 +82,10 @@ body {
   outline: 2px solid var(--brand);
   outline-offset: 2px;
 }
+
+/* Live meeting reactions drift up and fade out. */
+@keyframes float {
+  0% { transform: translateY(0); opacity: 0; }
+  10% { opacity: 1; }
+  100% { transform: translateY(-160px); opacity: 0; }
+}

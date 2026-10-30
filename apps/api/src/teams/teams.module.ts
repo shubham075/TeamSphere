@@ -8,5 +8,6 @@ import { TeamsService } from './teams.service';
   imports: [PresenceModule],
   controllers: [TeamsController, ChannelsController, TagsController],
   providers: [TeamsService, ChannelPostsService],
+  exports: [TeamsService, ChannelPostsService],
 })
 export class TeamsModule {}

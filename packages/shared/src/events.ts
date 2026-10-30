@@ -23,6 +23,11 @@ export const WS_EVENTS = {
   voicemailNew: 'voicemail:new',
   meetingLobby: 'meeting:lobby',
   meetingAdmitted: 'meeting:admitted',
+  /** Meeting created / edited / cancelled / RSVP changed: refresh calendars. */
+  meetingChanged: 'meeting:changed',
+  /** Live state of an in-progress meeting (lobby, hands, lock, roster). */
+  meetingUpdated: 'meeting:updated',
+  meetingReminder: 'meeting:reminder',
   notificationNew: 'notification:new',
   channelUpdated: 'channel:updated',
   teamUpdated: 'team:updated',
