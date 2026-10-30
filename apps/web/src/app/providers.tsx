@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { refreshSession } from '@/lib/api';
 import { useAuth } from '@/lib/auth-store';
-import { applyTheme, getThemePref } from '@/lib/theme';
+import { applyPrefs, getPrefs } from '@/lib/theme';
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -32,7 +32,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
   // Follow OS theme changes when the preference is "system".
   useEffect(() => {
     const mq = matchMedia('(prefers-color-scheme: dark)');
-    const onChange = () => applyTheme(getThemePref());
+    const onChange = () => applyPrefs(getPrefs());
     mq.addEventListener('change', onChange);
     return () => mq.removeEventListener('change', onChange);
   }, []);

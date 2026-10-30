@@ -75,6 +75,12 @@ export function RealtimeProvider() {
       void qc.invalidateQueries({ queryKey: qk.activity });
     });
 
+    // Admin changed org settings or policies: refetch branding/limits and what this user may do.
+    socket.on(WS_EVENTS.orgUpdated, () => {
+      void qc.invalidateQueries({ queryKey: ['org'] });
+      void qc.invalidateQueries({ queryKey: ['my-policies'] });
+    });
+
     socket.on(WS_EVENTS.messageNew, (m: MessageInfo) => {
       const list = qc.getQueryData<ConversationInfo[]>(qk.conversations);
       const conversation = list?.find((c) => c.id === m.conversationId);

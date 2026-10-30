@@ -46,6 +46,48 @@
   --success: #6bcb64;
 }
 
+/* High contrast: black background, white text, yellow accents, strong borders (WCAG AAA contrast). */
+.hc {
+  --bg: #000000;
+  --surface: #000000;
+  --surface-2: #0d0d0d;
+  --surface-hover: #1a1a1a;
+  --rail: #000000;
+  --titlebar: #000000;
+  --titlebar-text: #ffffff;
+  --border: #ffffff;
+  --text: #ffffff;
+  --text-muted: #e6e6e6;
+  --brand: #ffff00;
+  --brand-hover: #ffff66;
+  --brand-soft: #333300;
+  --brand-text: #000000;
+  --danger: #ff6b6b;
+  --success: #3ff23f;
+}
+
+.hc /* Compact density: tighter type and spacing everywhere (Tailwind spacing scales from --spacing). */
+.compact {
+  --spacing: 0.2rem;
+  font-size: 14px;
+}
+
+/* Search snippets: matched words. */
+mark.hit {
+  background: var(--brand-soft);
+  color: inherit;
+  font-weight: 600;
+  border-radius: 2px;
+}
+
+:focus-visible {
+  outline: 3px solid #00ffff;
+}
+
+.hc a {
+  text-decoration: underline;
+}
+
 @theme inline {
   --color-bg: var(--bg);
   --color-surface: var(--surface);

@@ -3,7 +3,10 @@
 import clsx from 'clsx';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { ShieldCheck } from 'lucide-react';
 import { MORE_APPS, RAIL_APPS, RailApp } from '@/lib/apps';
+import { useMe } from '@/lib/presence';
+import { useMyPolicies } from '@/lib/search';
 import { useActivity, useConversations } from '@/lib/chat';
 import { useTeamsUnread } from '@/lib/teams';
 
@@ -32,12 +35,22 @@ function RailItem({ app, active, badge = 0 }: { app: RailApp; active: boolean; b
   );
 }
 
+const ADMIN_APP: RailApp = { id: 'admin', label: 'Admin', icon: ShieldCheck, phase: 7, description: 'Admin center' };
+
 export function AppRail() {
   const pathname = usePathname();
   const current = pathname.split('/')[1];
   const { data: conversations } = useConversations();
   const { data: activity } = useActivity();
   const teamsUnread = useTeamsUnread();
+  const { data: me } = useMe();
+  const { data: policies } = useMyPolicies();
+  // The apps policy hides apps an admin turned off for this person (the server refuses their actions too).
+  const hidden = new Set<string>([
+    ...(policies && !policies.apps.files ? ['files'] : []),
+    ...(policies && !policies.apps.meetings ? ['calendar'] : []),
+    ...(policies && (!policies.apps.calls || !policies.calling.allowCalls) ? ['calls'] : []),
+  ]);
   const badges: Record<string, number> = {
     chat: conversations?.filter((c) => c.unread > 0 && !c.muted).length ?? 0,
     activity: activity?.filter((a) => !a.read).length ?? 0,
@@ -46,10 +59,11 @@ export function AppRail() {
 
   return (
     <nav aria-label="Apps" className="flex w-[68px] shrink-0 flex-col items-center border-r border-border bg-rail py-1">
-      {RAIL_APPS.map((app) => (
+      {RAIL_APPS.filter((app) => !hidden.has(app.id)).map((app) => (
         <RailItem key={app.id} app={app} active={current === app.id} badge={badges[app.id]} />
       ))}
       <div className="mt-auto w-full">
+        {me?.role === 'admin' && <RailItem app={ADMIN_APP} active={current === ADMIN_APP.id} />}
         <RailItem app={MORE_APPS} active={current === MORE_APPS.id} />
       </div>
     </nav>

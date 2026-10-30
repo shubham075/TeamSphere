@@ -2,8 +2,9 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { Monitor, Moon, Sun } from 'lucide-react';
-import { FormEvent, useEffect, useState } from 'react';
+import { Contrast, Monitor, Moon, Sun } from 'lucide-react';
+import Link from 'next/link';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 import type {
   DesktopSettings, OutOfOfficeSettings, PublicUser, SessionInfo, UpdateProfileInput, UpdateStatus,
 } from '@teamsphere/shared';
@@ -13,7 +14,8 @@ import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth-store';
 import { getDesktop } from '@/lib/desktop';
 import { Me, useMe } from '@/lib/presence';
-import { getThemePref, setThemePref, ThemePref } from '@/lib/theme';
+import { formatDateTime, LANGUAGES, timeZones, usePrefs } from '@/lib/i18n';
+import { Density, setPrefs, ThemePref, ZOOM_STEPS } from '@/lib/theme';
 
 const SECTIONS = ['General', 'Profile', 'Calendar', 'Privacy & devices', 'Desktop app', 'Administration'] as const;
 type Section = (typeof SECTIONS)[number];
@@ -54,7 +56,7 @@ export default function SettingsPage() {
           {section === 'Calendar' && <WorkingHoursCard />}
           {section === 'Privacy & devices' && <DeviceSettings me={me} />}
           {section === 'Desktop app' && <DesktopAppSettings />}
-          {section === 'Administration' && <AdminUsers />}
+          {section === 'Administration' && <AdminLink />}
         </div>
       </div>
     </>
@@ -94,36 +96,90 @@ function Notice({ error, ok }: { error?: string | null; ok?: string | null }) {
 const errorText = (e: unknown) => (e instanceof ApiError ? e.message : e ? 'Something went wrong' : null);
 
 function GeneralSettings() {
-  const [theme, setTheme] = useState<ThemePref>('system');
-  useEffect(() => setTheme(getThemePref()), []);
+  const prefs = usePrefs();
+  const zones = useMemo(() => timeZones(), []);
   const options: { id: ThemePref; label: string; icon: typeof Sun }[] = [
     { id: 'system', label: 'System', icon: Monitor },
     { id: 'light', label: 'Light', icon: Sun },
     { id: 'dark', label: 'Dark', icon: Moon },
+    { id: 'contrast', label: 'High contrast', icon: Contrast },
   ];
   return (
-    <Card title="Theme">
-      <div role="radiogroup" className="grid grid-cols-3 gap-3">
-        {options.map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            role="radio"
-            aria-checked={theme === id}
-            onClick={() => {
-              setTheme(id);
-              setThemePref(id);
-            }}
-            className={clsx(
-              'flex flex-col items-center gap-2 rounded-lg border p-4 text-sm',
-              theme === id ? 'border-brand bg-brand-soft font-semibold' : 'border-border hover:bg-surface-hover',
-            )}
-          >
-            <Icon size={22} />
-            {label}
-          </button>
-        ))}
-      </div>
-    </Card>
+    <>
+      <Card title="Theme">
+        <div role="radiogroup" aria-label="Theme" className="grid grid-cols-4 gap-3">
+          {options.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              role="radio"
+              aria-checked={prefs.theme === id}
+              onClick={() => setPrefs({ theme: id })}
+              className={clsx(
+                'flex flex-col items-center gap-2 rounded-lg border p-4 text-sm',
+                prefs.theme === id ? 'border-brand bg-brand-soft font-semibold' : 'border-border hover:bg-surface-hover',
+              )}
+            >
+              <Icon size={22} />
+              {label}
+            </button>
+          ))}
+        </div>
+      </Card>
+      <Card title="Layout">
+        <div className="space-y-4 text-sm">
+          <div role="radiogroup" aria-label="Density" className="flex items-center gap-3">
+            <span className="w-28 text-muted">Density</span>
+            {(['comfortable', 'compact'] as Density[]).map((d) => (
+              <button
+                key={d}
+                role="radio"
+                aria-checked={prefs.density === d}
+                onClick={() => setPrefs({ density: d })}
+                className={clsx('rounded-md border px-3 py-1.5 capitalize', prefs.density === d ? 'border-brand bg-brand-soft font-semibold' : 'border-border hover:bg-surface-hover')}
+              >
+                {d}
+              </button>
+            ))}
+          </div>
+          <label className="flex items-center gap-3">
+            <span className="w-28 text-muted">Zoom</span>
+            <select value={prefs.zoom} onChange={(e) => setPrefs({ zoom: Number(e.target.value) })} className="rounded-md border border-border bg-surface px-2 py-1.5">
+              {ZOOM_STEPS.map((z) => (
+                <option key={z} value={z}>{z}%</option>
+              ))}
+            </select>
+            <span className="text-xs text-muted">Ctrl+= / Ctrl+- / Ctrl+0</span>
+          </label>
+        </div>
+      </Card>
+      <Card title="Language & region">
+        <div className="space-y-4 text-sm">
+          <label className="flex items-center gap-3">
+            <span className="w-28 text-muted">Language</span>
+            <select value={prefs.language} onChange={(e) => setPrefs({ language: e.target.value })} className="rounded-md border border-border bg-surface px-2 py-1.5">
+              {LANGUAGES.map((l) => (
+                <option key={l.id} value={l.id}>{l.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-3">
+            <span className="w-28 text-muted">Time zone</span>
+            <select value={prefs.timeZone} onChange={(e) => setPrefs({ timeZone: e.target.value })} className="max-w-xs rounded-md border border-border bg-surface px-2 py-1.5">
+              <option value="auto">Automatic ({Intl.DateTimeFormat().resolvedOptions().timeZone})</option>
+              {zones.map((z) => (
+                <option key={z} value={z}>{z}</option>
+              ))}
+            </select>
+          </label>
+          <p className="text-xs text-muted">Example: {formatDateTime(new Date(), undefined, prefs)}</p>
+        </div>
+      </Card>
+      <Card title="Keyboard shortcuts">
+        <p className="text-sm text-muted">
+          Press <kbd className="rounded border border-border px-1">Ctrl</kbd>+<kbd className="rounded border border-border px-1">.</kbd> anywhere to see every shortcut.
+        </p>
+      </Card>
+    </>
   );
 }
 
@@ -525,116 +581,14 @@ function DesktopAppSettings() {
   );
 }
 
-function AdminUsers() {
-  const qc = useQueryClient();
-  const [q, setQ] = useState('');
-  const { data: users } = useQuery({
-    queryKey: ['admin-users', q],
-    queryFn: () => api<PublicUser[]>(`/users?take=100&includeInactive=1&q=${encodeURIComponent(q)}`),
-  });
-  const [form, setForm] = useState({ username: '', displayName: '', email: '', password: '', role: 'user' });
-  const set = (k: keyof typeof form) => (v: string) => setForm((f) => ({ ...f, [k]: v }));
-
-  const create = useMutation({
-    mutationFn: () => api<PublicUser>('/users', { method: 'POST', json: { ...form, email: form.email || undefined } }),
-    onSuccess: () => {
-      setForm({ username: '', displayName: '', email: '', password: '', role: 'user' });
-      qc.invalidateQueries({ queryKey: ['admin-users'] });
-    },
-  });
-  const toggle = useMutation({
-    mutationFn: (u: PublicUser) => api(`/users/${u.id}/active`, { method: 'PATCH', json: { isActive: !u.isActive } }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin-users'] }),
-  });
-  const reset = useMutation({
-    mutationFn: ({ id, password }: { id: string; password: string }) =>
-      api(`/users/${id}/password`, { method: 'POST', json: { password } }),
-  });
-
+/** User administration moved to the admin center (Phase 7). */
+function AdminLink() {
   return (
-    <>
-      <Card title="Add a TeamSphere account">
-        <p className="mb-4 text-sm text-muted">
-          People who sign in with Microsoft Entra ID or the company directory are created automatically on first sign-in.
-        </p>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            create.mutate();
-          }}
-          className="grid grid-cols-1 gap-4 sm:grid-cols-2"
-        >
-          <Field label="Username" value={form.username} onChange={set('username')} />
-          <Field label="Display name" value={form.displayName} onChange={set('displayName')} />
-          <Field label="Email (optional)" type="email" value={form.email} onChange={set('email')} />
-          <Field label="Temporary password" type="password" value={form.password} onChange={set('password')} />
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="font-medium">Role</span>
-            <select
-              value={form.role}
-              onChange={(e) => set('role')(e.target.value)}
-              className="rounded-md border border-border bg-surface px-3 py-2"
-            >
-              <option value="user">User</option>
-              <option value="admin">Admin</option>
-              <option value="guest">Guest</option>
-            </select>
-          </label>
-          <div className="flex items-end gap-4">
-            <button
-              disabled={create.isPending}
-              className="rounded-md bg-brand px-4 py-2 text-sm font-semibold text-brand-text hover:bg-brand-hover disabled:opacity-60"
-            >
-              Create account
-            </button>
-          </div>
-          <div className="sm:col-span-2">
-            <Notice error={errorText(create.error)} ok={create.isSuccess ? 'Account created' : null} />
-          </div>
-        </form>
-      </Card>
-
-      <Card title="People">
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search people"
-          aria-label="Search people"
-          className="mb-3 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand"
-        />
-        <ul className="divide-y divide-border">
-          {users?.map((u) => (
-            <li key={u.id} className="flex items-center gap-3 py-2.5 text-sm">
-              <Avatar name={u.displayName} src={u.avatarUrl} size={32} />
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-medium">{u.displayName}</p>
-                <p className="truncate text-xs text-muted">
-                  {u.username} · {u.role} · {u.authProvider}
-                  {!u.isActive && <span className="ml-1 font-semibold text-danger">· disabled</span>}
-                </p>
-              </div>
-              {u.authProvider === 'local' && (
-                <button
-                  onClick={() => {
-                    const password = prompt(`New temporary password for ${u.displayName} (8+ characters):`);
-                    if (password) reset.mutate({ id: u.id, password });
-                  }}
-                  className="rounded-md border border-border px-3 py-1.5 hover:bg-surface-hover"
-                >
-                  Reset password
-                </button>
-              )}
-              <button
-                onClick={() => toggle.mutate(u)}
-                className={clsx('rounded-md border px-3 py-1.5 hover:bg-surface-hover', u.isActive ? 'border-border' : 'border-brand text-brand')}
-              >
-                {u.isActive ? 'Disable' : 'Enable'}
-              </button>
-            </li>
-          ))}
-        </ul>
-        <Notice error={errorText(toggle.error ?? reset.error)} ok={reset.isSuccess ? 'Password reset. Their other sessions were signed out.' : null} />
-      </Card>
-    </>
+    <Card title="Administration">
+      <p className="mb-3 text-sm text-muted">Manage users, guests, teams, policies, org settings and the audit log in the admin center.</p>
+      <Link href="/admin" className="rounded-md bg-brand px-3 py-1.5 text-sm font-semibold text-brand-text hover:bg-brand-hover">
+        Open admin center
+      </Link>
+    </Card>
   );
 }

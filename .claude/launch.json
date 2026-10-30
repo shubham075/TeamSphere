@@ -160,6 +160,34 @@
         "API_URL": "http://127.0.0.1:4012",
         "NEXT_PUBLIC_SOCKET_PORT": "4012"
       }
+    },
+    {
+      "name": "api-admin",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--dir",
+        "apps/api",
+        "dev"
+      ],
+      "port": 4014
+    },
+    {
+      "name": "web-admin",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--dir",
+        "apps/web",
+        "exec",
+        "next",
+        "dev",
+        "--port",
+        "4015"
+      ],
+      "port": 4015,
+      "env": {
+        "API_URL": "http://127.0.0.1:4014",
+        "NEXT_PUBLIC_SOCKET_PORT": "4014"
+      }
     }
   ]
 }
