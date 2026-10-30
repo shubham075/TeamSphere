@@ -107,7 +107,7 @@ export function PollCard({ poll, manage, onAct, onVote }: {
             <li key={i}>
               <label className="relative flex cursor-pointer items-center gap-2 overflow-hidden rounded px-2 py-1 ring-1 ring-current/15">
                 {pct !== null && <span aria-hidden className="absolute inset-y-0 left-0 bg-brand/25" style={{ width: `${pct}%` }} />}
-                <input type={poll.multiple ? 'checkbox' : 'radio'} name={`poll-${poll.id}`} disabled={!canVote} checked={picked.includes(i)} onChange={() => toggle(i)} className="relative" />
+                <input type={poll.multiple ? 'checkbox' : 'radio'} name={`poll-${poll.id}`} aria-label={o} disabled={!canVote} checked={picked.includes(i)} onChange={() => toggle(i)} className="relative" />
                 <span className="relative flex-1">{o}</span>
                 {pct !== null && <span className="relative text-xs tabular-nums">{poll.counts[i]} · {pct}%</span>}
               </label>
