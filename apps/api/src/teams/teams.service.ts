@@ -142,7 +142,7 @@ export class TeamsService implements OnModuleInit, OnModuleDestroy {
     if (source && input.copyFrom?.members) for (const m of source.members) if (m.userId !== me) roles.set(m.userId, m.role);
     for (const id of input.memberIds ?? []) if (id !== me && !roles.has(id)) roles.set(id, 'member');
     if (input.visibility === 'orgwide') {
-      const everyone = await this.prisma.user.findMany({ where: { isActive: true, id: { not: me } }, select: { id: true } });
+      const everyone = await this.prisma.user.findMany({ where: { isActive: true, guestMeetingId: null, id: { not: me } }, select: { id: true } });
       for (const u of everyone) if (!roles.has(u.id)) roles.set(u.id, 'member');
     }
     if (roles.size) {

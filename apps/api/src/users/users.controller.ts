@@ -198,6 +198,8 @@ export class UsersController {
       where: {
         // Admins can list disabled accounts (to re-enable them); everyone else only sees active people.
         ...(includeInactive === '1' && me.role === 'admin' ? {} : { isActive: true }),
+        // Anonymous meeting guests never show up in the directory.
+        guestMeetingId: null,
         ...(term
           ? {
               OR: [

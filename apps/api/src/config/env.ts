@@ -29,6 +29,10 @@ const envSchema = z.object({
   LIVEKIT_PUBLIC_URL: z.string().optional(),
   LIVEKIT_API_KEY: z.string().min(1),
   LIVEKIT_API_SECRET: z.string().min(32),
+  /** S3 endpoint as reached from the Egress container (recordings upload there); defaults to S3_ENDPOINT. */
+  EGRESS_S3_ENDPOINT: z.string().url().optional(),
+  /** Days meeting recordings are kept (SOURCE_OF_TRUTH Q12). */
+  RECORDING_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(90),
 
   ENTRA_ENABLED: bool,
   ENTRA_TENANT_ID: z.string().optional(),

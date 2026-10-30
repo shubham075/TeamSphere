@@ -87,6 +87,19 @@ export class SessionService {
     });
   }
 
+  /**
+   * Session for an anonymous meeting guest: no refresh token (so a signed-in user's cookie in the same browser is
+   * left alone); the access token lives as long as the session instead.
+   */
+  async createGuest(user: User, client: { ip: string | null; userAgent: string | null }, hours: number): Promise<{ accessToken: string; expiresAt: Date }> {
+    const expiresAt = new Date(Date.now() + hours * 3600_000);
+    const session = await this.prisma.session.create({
+      data: { userId: user.id, refreshTokenHash: sha256(randomBytes(48).toString('base64url')), expiresAt, ...client },
+    });
+    const payload: AccessTokenPayload = { sub: user.id, role: user.role, sid: session.id };
+    return { accessToken: await this.jwt.signAsync(payload, { expiresIn: `${hours}h` }), expiresAt };
+  }
+
   listActive(userId: string) {
     return this.prisma.session.findMany({
       where: { userId, revokedAt: null, expiresAt: { gt: new Date() } },

@@ -5,13 +5,15 @@ import { MeetingRole, Prisma } from '@prisma/client';
 import { randomInt, randomUUID } from 'node:crypto';
 import { TrackSource, type WebhookEvent } from 'livekit-server-sdk';
 import {
-  ActivityItem, AttendanceReport, BusyInterval, CallUser, createPostSchema, CreateMeetingInput, createMeetingSchema,
+  ActivityItem, AttendanceReport, BreakoutActionInput, BreakoutState, BusyInterval, GuestJoinResult, MeetingBroadcastEvent, MeetingRoomToken, CallUser, createPostSchema, CreateMeetingInput, createMeetingSchema,
   DEFAULT_MEETING_OPTIONS, DEFAULT_WORKING_HOURS, FreeBusyInfo, HostActionInput, InstantMeetingInput,
   MEETING_REMINDER_MINUTES, MeetingException, MeetingInfo, MeetingJoinResult, MeetingLiveState, MeetingLobbyEvent,
   MeetingOccurrence, MeetingOptions, meetingOptionsSchema, MeetingReminderEvent, Recurrence, RsvpInput, RsvpState,
   UpdateMeetingInput, UpdateMeetingOptionsInput, WorkingHours, WS_EVENTS,
 } from '@teamsphere/shared';
 import { AuditService } from '../audit/audit.service';
+import { SessionService } from '../auth/session.service';
+import { toPublicUser } from '../users/users.mapper';
 import { NOTIFICATION_INCLUDE, toActivityItem, toCallUser } from '../calls/calls.mapper';
 import { LivekitService } from '../calls/livekit.service';
 import { ChatService } from '../chat/chat.service';
@@ -25,6 +27,8 @@ import {
   bypassesLobby, effectiveRole, expandOccurrences, isOccurrenceOf, isOrganizerRole, isValidTimeZone, mergeIntervals,
   publishSources, PublishSource, SeriesInput, suggestTimes, summarizeAttendance,
 } from './meetings.logic';
+import { assignBreakouts, canRunMeeting, guestDisplayName, moveToRoom, roomFor } from './advanced.logic';
+import { RecordingsService } from './recordings.service';
 
 const MEETING_INCLUDE = { attendees: true } satisfies Prisma.MeetingInclude;
 type MeetingRow = Prisma.MeetingGetPayload<{ include: typeof MEETING_INCLUDE }>;
@@ -44,6 +48,26 @@ const RECONCILE_MS = 15_000;
 /** A session nobody connected to within this time (or left empty) ends. */
 const EMPTY_SESSION_MS = 90_000;
 const INSTANT_MINUTES = 60;
+/** Guest sessions last this long (no refresh); guests are disabled when the meeting session ends anyway. */
+const GUEST_SESSION_HOURS = 12;
+/** When breakout rooms close, people get this long to move back before the rooms are torn down. */
+const BREAKOUT_CLOSE_GRACE_MS = 3_000;
+
+interface BreakoutRoom {
+  id: string;
+  name: string;
+  /** Separate LiveKit room (`mbr-<uuid>`), so the meeting webhook/attendance code ignores it by name. */
+  roomName: string;
+  userIds: Set<string>;
+  present: Set<string>;
+}
+
+interface Breakouts {
+  open: boolean;
+  endsAt: Date | null;
+  timer: NodeJS.Timeout | null;
+  rooms: BreakoutRoom[];
+}
 
 /**
  * In-memory state of a live session: lobby, admitted people, raised hands and host switches. Like calls this
@@ -60,9 +84,11 @@ interface Live {
   admitted: Set<string>;
   removed: Set<string>;
   hands: { userId: string; at: Date }[];
-  /** Users currently in the LiveKit room (from the last reconcile / webhook). */
+  /** Users currently in the LiveKit room or one of its breakout rooms (from the last reconcile / webhook). */
   inRoom: Set<string>;
   startedAt: Date;
+  recording: { id: string; startedAt: Date; startedBy: string } | null;
+  breakouts: Breakouts | null;
 }
 
 /** Meetings & calendar (SOURCE_OF_TRUTH §3.6, §3.8). Media reuses the Phase 3 LiveKit setup. */
@@ -71,6 +97,8 @@ export class MeetingsService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(MeetingsService.name);
   private readonly lives = new Map<string, Live>();
   private readonly reminded = new Map<string, number>();
+  /** Anonymous guests seen by this instance (always plain attendees, never presenters). */
+  private readonly guestIds = new Set<string>();
   private timers: NodeJS.Timeout[] = [];
 
   constructor(
@@ -82,10 +110,18 @@ export class MeetingsService implements OnModuleInit, OnModuleDestroy {
     private readonly teams: TeamsService,
     private readonly posts: ChannelPostsService,
     private readonly audit: AuditService,
+    private readonly recordings: RecordingsService,
+    private readonly sessions: SessionService,
   ) {}
 
   onModuleInit() {
     this.livekit.onWebhookEvent((e) => this.onWebhook(e));
+    this.recordings.onStopped = (meetingId, recordingId) => {
+      const live = [...this.lives.values()].find((l) => l.meetingId === meetingId && l.recording?.id === recordingId);
+      if (!live) return;
+      live.recording = null;
+      void this.broadcast(live);
+    };
     if (process.env.VITEST) return;
     this.timers.push(
       setInterval(() => void this.sendReminders().catch((e) => this.logger.warn(`reminders: ${e}`)), REMINDER_SWEEP_MS),
@@ -436,9 +472,15 @@ export class MeetingsService implements OnModuleInit, OnModuleDestroy {
   async join(me: string, id: string, occurrence?: string): Promise<MeetingJoinResult> {
     const m = await this.load(id);
     if (m.cancelledAt) return { status: 'denied', reason: 'cancelled' };
-    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: me }, select: USER_SELECT });
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: me }, select: { ...USER_SELECT, guestMeetingId: true } });
+    const guest = !!user.guestMeetingId;
+    if (guest) {
+      if (user.guestMeetingId !== m.id) throw new ForbiddenException('Guests can only join the meeting they were invited to');
+      if (!this.options(m).allowGuests) return { status: 'denied', reason: 'declined' };
+      this.guestIds.add(me);
+    }
     const role = this.roleOf(m, me);
-    const invited = await this.isInvited(m, me);
+    const invited = !guest && (await this.isInvited(m, me));
     const session = await this.activeSession(m, occurrence);
     const live = await this.live(session.id);
 
@@ -446,7 +488,8 @@ export class MeetingsService implements OnModuleInit, OnModuleDestroy {
     const organizer = isOrganizerRole(role);
     if (!organizer && !live.admitted.has(me)) {
       if (live.locked) return { status: 'denied', reason: 'locked' };
-      if (!bypassesLobby(role, invited, this.options(m))) {
+      // Anonymous guests always wait for someone to let them in.
+      if (guest || !bypassesLobby(role, invited, this.options(m))) {
         if (!live.lobby.has(me)) {
           live.lobby.set(me, { user: toCallUser(user), since: new Date() });
           const event: MeetingLobbyEvent = { meetingId: m.id, sessionId: live.sessionId, kind: 'waiting', user: toCallUser(user) };
@@ -458,15 +501,182 @@ export class MeetingsService implements OnModuleInit, OnModuleDestroy {
     }
     live.admitted.add(me);
     live.lobby.delete(me);
-    // Everyone who gets in keeps the meeting chat afterwards.
-    await this.chat.syncMeetingChat(m.organizerId, m.conversationId, m.title, [me]);
+    // Everyone who gets in keeps the meeting chat afterwards (guests have no chat access).
+    if (!guest) await this.chat.syncMeetingChat(m.organizerId, m.conversationId, m.title, [me]);
     const sources = publishSources(role, this.options(m), live).map((s) => SOURCES[s]);
     const token = await this.livekit.token(live.roomName, user, sources);
     await this.broadcast(live);
     return {
       status: 'admitted', url: this.livekit.publicUrl, token, roomName: live.roomName, role,
-      state: await this.state(live), meeting: await this.toInfo(m, me, true),
+      state: await this.state(live), meeting: await this.toInfo(m, me, !guest),
     };
+  }
+
+  /** Anonymous join from the link: creates a meeting-scoped guest account and a short session. */
+  async guestJoin(code: string, name: string, client: { ip: string | null; userAgent: string | null }): Promise<GuestJoinResult> {
+    const m = await this.prisma.meeting.findUnique({ where: { joinCode: code.replace(/\s+/g, '') }, include: MEETING_INCLUDE });
+    if (!m || m.cancelledAt) throw new NotFoundException('No meeting with that link');
+    if (!this.options(m).allowGuests) throw new ForbiddenException('This meeting doesn’t allow guests');
+    const user = await this.prisma.user.create({
+      data: { username: `guest-${randomUUID()}`, displayName: guestDisplayName(name), role: 'guest', guestMeetingId: m.id },
+    });
+    this.guestIds.add(user.id);
+    const { accessToken } = await this.sessions.createGuest(user, client, GUEST_SESSION_HOURS);
+    this.audit.log({ actorId: user.id, action: 'meeting.guest_join', targetType: 'meeting', targetId: m.id, meta: { name: user.displayName } });
+    return { accessToken, meetingId: m.id, user: toPublicUser(user) };
+  }
+
+  /**
+   * Who may use a meeting's polls, Q&A, whiteboard and recordings: invited people, plus anyone (guests included)
+   * admitted to its live session.
+   */
+  async access(me: string, meetingId: string): Promise<{ m: MeetingRow; moderator: boolean; audience: string[] }> {
+    const m = await this.load(meetingId);
+    const live = [...this.lives.values()].find((l) => l.meetingId === meetingId);
+    const inLive = !!live && (live.admitted.has(me) || live.inRoom.has(me));
+    const allowed = inLive || (!this.guestIds.has(me) && (await this.isInvited(m, me)));
+    if (!allowed) throw new ForbiddenException('You are not in this meeting');
+    const audience = [m.organizerId, ...m.attendees.map((a) => a.userId), ...(live ? [...live.admitted, ...live.inRoom] : [])];
+    return { m, moderator: canRunMeeting(this.roleOf(m, me)), audience: [...new Set(audience)] };
+  }
+
+  optionsOf(m: { options: Prisma.JsonValue }): MeetingOptions {
+    return this.options(m);
+  }
+
+  /** People admitted to or present in the meeting's live session right now (guests included). */
+  liveAudience(meetingId: string): string[] {
+    const live = [...this.lives.values()].find((l) => l.meetingId === meetingId);
+    return live ? [...new Set([...live.admitted, ...live.inRoom])] : [];
+  }
+
+  // ------------------------------------------------------------------ rooms, breakouts, recording
+
+  /**
+   * Token for the room I belong in right now: my breakout room while rooms are open, else the main room.
+   * Organizers may visit any breakout room (`roomId`) or return to the main room (`main`).
+   */
+  async roomToken(me: string, sessionId: string, roomId?: string): Promise<MeetingRoomToken> {
+    const live = await this.requireInSession(me, sessionId);
+    const m = await this.load(live.meetingId);
+    const role = this.roleOf(m, me);
+    const user = await this.prisma.user.findUniqueOrThrow({ where: { id: me }, select: USER_SELECT });
+    let target = roomFor(live.breakouts, me);
+    if (roomId && isOrganizerRole(role)) target = roomId === 'main' ? null : roomId;
+    const room = target ? live.breakouts?.rooms.find((r) => r.id === target) : undefined;
+    if (target && (!room || !live.breakouts?.open)) throw new BadRequestException('That breakout room isn’t open');
+    // In breakout rooms everyone may talk and share (small groups), as in Teams.
+    const sources = room ? Object.values(SOURCES) : publishSources(role, this.options(m), live).map((s) => SOURCES[s]);
+    const token = await this.livekit.token(room ? room.roomName : live.roomName, user, sources);
+    return { url: this.livekit.publicUrl, token, roomName: room ? room.roomName : live.roomName, breakoutRoomId: room?.id ?? null, breakoutName: room?.name ?? null };
+  }
+
+  async breakoutAction(me: string, sessionId: string, input: BreakoutActionInput): Promise<MeetingLiveState> {
+    const { m, live } = await this.requireHost(me, sessionId);
+    const need = () => {
+      if (!live.breakouts) throw new BadRequestException('Create breakout rooms first');
+      return live.breakouts;
+    };
+    switch (input.action) {
+      case 'create': {
+        await this.closeBreakouts(live, true);
+        const rooms: BreakoutRoom[] = Array.from({ length: input.count }, (_, i) => ({
+          id: randomUUID(), name: `Room ${i + 1}`, roomName: `mbr-${randomUUID()}`, userIds: new Set<string>(), present: new Set<string>(),
+        }));
+        if (input.assign === 'auto') {
+          const organizers = new Set(this.organizerIds(m));
+          const people = [...live.inRoom].filter((id) => !organizers.has(id));
+          for (const [roomId, ids] of assignBreakouts(people, rooms.map((r) => r.id))) ids.forEach((id) => rooms.find((r) => r.id === roomId)!.userIds.add(id));
+        }
+        live.breakouts = { open: false, endsAt: null, timer: null, rooms };
+        break;
+      }
+      case 'assign':
+        try {
+          moveToRoom(need().rooms, input.userIds, input.roomId);
+        } catch {
+          throw new BadRequestException('Unknown room');
+        }
+        break;
+      case 'rename': {
+        const room = need().rooms.find((r) => r.id === input.roomId);
+        if (!room) throw new BadRequestException('Unknown room');
+        room.name = input.name;
+        break;
+      }
+      case 'open': {
+        const br = need();
+        br.open = true;
+        if (br.timer) clearTimeout(br.timer);
+        const minutes = input.minutes ?? null;
+        br.endsAt = minutes ? new Date(Date.now() + minutes * 60_000) : null;
+        br.timer = minutes
+          ? setTimeout(() => void this.closeBreakouts(live).catch((e) => this.logger.warn(`breakout timer: ${e}`)), minutes * 60_000)
+          : null;
+        break;
+      }
+      case 'close':
+        need();
+        await this.closeBreakouts(live);
+        break;
+      case 'broadcast': {
+        const from = (await this.usersById([me])).get(me)?.displayName ?? 'Organizer';
+        const event: MeetingBroadcastEvent = { meetingId: m.id, sessionId, from, text: input.text };
+        this.realtime.toUsers(this.audience(m, live), WS_EVENTS.meetingBroadcast, event);
+        return this.state(live);
+      }
+      case 'delete':
+        await this.closeBreakouts(live, true);
+        break;
+    }
+    this.audit.log({ actorId: me, action: `meeting.breakout.${input.action}`, targetType: 'meeting', targetId: m.id });
+    await this.broadcast(live);
+    return this.state(live);
+  }
+
+  /** Recording on/off (organizers and presenters). Everyone sees the notice through the live state. */
+  async setRecording(me: string, sessionId: string, on: boolean): Promise<MeetingLiveState> {
+    const live = await this.requireInSession(me, sessionId);
+    const m = await this.load(live.meetingId);
+    if (!canRunMeeting(this.roleOf(m, me))) throw new ForbiddenException('Only organizers and presenters can record');
+    if (on && !live.recording) await this.startRecording(m, live, me);
+    if (!on && live.recording) {
+      await this.recordings.stop(live.recording.id);
+      live.recording = null;
+      await this.chat.postSystemMessage(m.conversationId, me, '{actor} stopped recording.');
+      this.audit.log({ actorId: me, action: 'meeting.recording.stop', targetType: 'meeting', targetId: m.id });
+    }
+    await this.broadcast(live);
+    return this.state(live);
+  }
+
+  async listRecordings(me: string, meetingId: string) {
+    await this.access(me, meetingId);
+    return this.recordings.list(meetingId);
+  }
+
+  private async startRecording(m: MeetingRow, live: Live, by: string) {
+    const rec = await this.recordings.start(m.id, live.sessionId, live.roomName, by);
+    live.recording = { id: rec.id, startedAt: rec.startedAt, startedBy: by };
+    await this.chat.postSystemMessage(m.conversationId, by, '{actor} started recording. It will be listed with the meeting details.');
+    this.audit.log({ actorId: by, action: 'meeting.recording.start', targetType: 'meeting', targetId: m.id });
+  }
+
+  /**
+   * Closes breakout rooms: people get the new state first (their client moves back to the main room), then the
+   * LiveKit rooms are torn down after a grace period. `remove` drops the rooms altogether (recreate / delete).
+   */
+  private async closeBreakouts(live: Live, remove = false) {
+    const b = live.breakouts;
+    if (!b) return;
+    if (b.timer) clearTimeout(b.timer);
+    const wasOpen = b.open;
+    Object.assign(b, { open: false, endsAt: null, timer: null });
+    if (remove) live.breakouts = null;
+    if (!wasOpen) return;
+    await this.broadcast(live);
+    const names = b.rooms.map((r) => r.roomName);
+    setTimeout(() => void Promise.all(names.map((n) => this.livekit.closeRoom(n))).catch(() => undefined), BREAKOUT_CLOSE_GRACE_MS);
   }
 
   /** Leaving the lobby or the meeting (the room itself is tracked through LiveKit). */
@@ -579,12 +789,20 @@ export class MeetingsService implements OnModuleInit, OnModuleDestroy {
   private async reconcile(sessionId: string, known?: string[]) {
     const session = await this.prisma.meetingSession.findUnique({ where: { id: sessionId }, include: { meeting: { include: MEETING_INCLUDE }, attendance: { where: { leftAt: null } } } });
     if (!session || session.endedAt) return;
-    const ids = known ?? (await this.livekit.participantIds(session.roomName));
-    if (ids === null) return; // LiveKit unreachable: change nothing
+    const pre = await this.live(sessionId);
+    // A "room finished" webhook only covers the main room; people may still be in breakout rooms.
+    const main = known && !pre.breakouts?.open ? known : await this.livekit.participantIds(session.roomName);
+    if (main === null) return; // LiveKit unreachable: change nothing
+    const ids = [...main];
+    for (const room of pre.breakouts?.open ? pre.breakouts.rooms : []) {
+      room.present = new Set((await this.livekit.participantIds(room.roomName)) ?? room.present);
+      ids.push(...room.present);
+    }
+    const ended = !!known && !pre.breakouts?.open;
     const now = new Date();
     const present = new Set(ids);
     const open = new Set(session.attendance.map((a) => a.userId));
-    const joined = ids.filter((id) => !open.has(id));
+    const joined = [...present].filter((id) => !open.has(id));
     const left = session.attendance.filter((a) => !present.has(a.userId));
     if (joined.length) {
       await this.prisma.meetingAttendance.createMany({ data: joined.map((userId) => ({ sessionId, userId, role: this.roleOf(session.meeting, userId), joinedAt: now })) });
@@ -598,14 +816,20 @@ export class MeetingsService implements OnModuleInit, OnModuleDestroy {
     if (!present.size && !live.lobby.size) {
       const lastLeft = await this.prisma.meetingAttendance.aggregate({ where: { sessionId }, _max: { leftAt: true } });
       const lastActivity = Math.max(session.startedAt.getTime(), lastLeft._max.leftAt?.getTime() ?? 0);
-      if (now.getTime() - lastActivity >= EMPTY_SESSION_MS || known) {
+      if (now.getTime() - lastActivity >= EMPTY_SESSION_MS || ended) {
         await this.endSession(sessionId);
         return;
       }
     }
     if (joined.length || left.length) {
       await this.broadcast(live);
-      if (open.size === 0 && joined.length) this.changed(session.meeting); // went live
+      if (open.size === 0 && joined.length) {
+        this.changed(session.meeting); // went live
+        if (this.options(session.meeting).autoRecord && !live.recording) {
+          await this.startRecording(session.meeting, live, session.meeting.organizerId).catch((e) => this.logger.warn(`auto-record: ${e}`));
+          await this.broadcast(live);
+        }
+      }
     }
   }
 
@@ -617,6 +841,18 @@ export class MeetingsService implements OnModuleInit, OnModuleDestroy {
     await this.prisma.meetingAttendance.updateMany({ where: { sessionId, leftAt: null }, data: { leftAt: now } });
     await this.livekit.closeRoom(session.roomName);
     const live = this.lives.get(sessionId);
+    if (live?.recording) await this.recordings.stop(live.recording.id);
+    if (live?.breakouts) {
+      if (live.breakouts.timer) clearTimeout(live.breakouts.timer);
+      await Promise.all(live.breakouts.rooms.map((r) => this.livekit.closeRoom(r.roomName)));
+    }
+    // Guest accounts are single-use: they end with the meeting session.
+    const guests = await this.prisma.user.findMany({ where: { guestMeetingId: session.meetingId, isActive: true }, select: { id: true } });
+    if (guests.length) {
+      const ids = guests.map((g) => g.id);
+      await this.prisma.user.updateMany({ where: { id: { in: ids } }, data: { isActive: false } });
+      await this.prisma.session.updateMany({ where: { userId: { in: ids }, revokedAt: null }, data: { revokedAt: now } });
+    }
     if (live) {
       const state = await this.state(live, now);
       this.realtime.toUsers([...this.audience(session.meeting, live), ...live.lobby.keys()], WS_EVENTS.meetingUpdated, state);
@@ -670,11 +906,14 @@ export class MeetingsService implements OnModuleInit, OnModuleDestroy {
     if (cached) return cached;
     const s = await this.prisma.meetingSession.findUniqueOrThrow({ where: { id: sessionId }, include: { meeting: true, attendance: { where: { leftAt: null } } } });
     const options = this.options(s.meeting);
+    const rec = await this.prisma.recording.findFirst({ where: { sessionId, status: 'recording' }, orderBy: { startedAt: 'desc' } });
     const live: Live = {
       sessionId, meetingId: s.meetingId, roomName: s.roomName, locked: s.locked, startedAt: s.startedAt,
       allowAttendeeMic: options.allowAttendeeMic, allowAttendeeCamera: options.allowAttendeeCamera,
       lobby: new Map(), admitted: new Set(s.attendance.map((a) => a.userId)), removed: new Set(), hands: [],
       inRoom: new Set(s.attendance.map((a) => a.userId)),
+      recording: rec ? { id: rec.id, startedAt: rec.startedAt, startedBy: rec.startedById } : null,
+      breakouts: null,
     };
     this.lives.set(sessionId, live);
     return live;
@@ -682,7 +921,7 @@ export class MeetingsService implements OnModuleInit, OnModuleDestroy {
 
   private async state(live: Live, endedAt: Date | null = null): Promise<MeetingLiveState> {
     const m = await this.load(live.meetingId);
-    const users = await this.usersById([...live.inRoom]);
+    const users = await this.usersById([...live.inRoom, ...(live.recording ? [live.recording.startedBy] : [])]);
     return {
       meetingId: live.meetingId, sessionId: live.sessionId, locked: live.locked,
       allowAttendeeMic: live.allowAttendeeMic, allowAttendeeCamera: live.allowAttendeeCamera,
@@ -690,6 +929,8 @@ export class MeetingsService implements OnModuleInit, OnModuleDestroy {
       hands: live.hands.map((h) => ({ userId: h.userId, at: h.at.toISOString() })),
       participants: [...live.inRoom].filter((id) => users.has(id)).map((id) => ({ ...toCallUser(users.get(id)!), role: this.roleOf(m, id) })),
       endedAt: endedAt?.toISOString() ?? null,
+      recording: live.recording ? { startedAt: live.recording.startedAt.toISOString(), startedBy: users.get(live.recording.startedBy)?.displayName ?? 'Someone' } : null,
+      breakouts: live.breakouts ? breakoutState(live.breakouts) : null,
     };
   }
 
@@ -727,6 +968,7 @@ export class MeetingsService implements OnModuleInit, OnModuleDestroy {
   }
 
   private roleOf(m: MeetingRow, userId: string): MeetingRole {
+    if (this.guestIds.has(userId)) return 'attendee';
     return effectiveRole(m.attendees.find((a) => a.userId === userId)?.role, m.organizerId === userId, this.options(m));
   }
 
@@ -867,4 +1109,11 @@ export class MeetingsService implements OnModuleInit, OnModuleDestroy {
     const count = await this.prisma.user.count({ where: { id: { in: [...new Set(ids)] }, isActive: true } });
     if (count !== new Set(ids).size) throw new BadRequestException('Some people could not be found');
   }
+}
+
+function breakoutState(b: Breakouts): BreakoutState {
+  return {
+    open: b.open, endsAt: b.endsAt?.toISOString() ?? null,
+    rooms: b.rooms.map((r) => ({ id: r.id, name: r.name, userIds: [...r.userIds], presentIds: b.open ? [...r.present] : [] })),
+  };
 }

@@ -3,7 +3,8 @@ import { Reflector } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import type { UserRole } from '@teamsphere/shared';
 import { PrismaService } from '../prisma/prisma.service';
-import { AuthUser, IS_PUBLIC, ROLES } from './auth.decorators';
+import { guestRouteAllowed } from '../meetings/advanced.logic';
+import { AuthUser, GUEST_ALLOWED, IS_PUBLIC, ROLES } from './auth.decorators';
 
 export interface AccessTokenPayload {
   sub: string;
@@ -41,13 +42,15 @@ export class AccessTokenGuard implements CanActivate {
 
     const session = await this.prisma.session.findUnique({
       where: { id: payload.sid },
-      select: { revokedAt: true, expiresAt: true, user: { select: { isActive: true, role: true } } },
+      select: { revokedAt: true, expiresAt: true, user: { select: { isActive: true, role: true, guestMeetingId: true } } },
     });
     if (!session || session.revokedAt || session.expiresAt < new Date() || !session.user.isActive) {
       throw new UnauthorizedException();
     }
 
-    req.user = { id: payload.sub, role: session.user.role, sessionId: payload.sid } satisfies AuthUser;
+    const guestOk = this.reflector.getAllAndOverride<boolean>(GUEST_ALLOWED, [ctx.getHandler(), ctx.getClass()]) ?? false;
+    if (!guestRouteAllowed(session.user, guestOk)) throw new ForbiddenException('Guests can only use the meeting they joined');
+    req.user = { id: payload.sub, role: session.user.role, sessionId: payload.sid, guestMeetingId: session.user.guestMeetingId } satisfies AuthUser;
     return true;
   }
 }
