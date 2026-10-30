@@ -7,7 +7,7 @@ export const MEETING_ROLES = ['organizer', 'coorganizer', 'presenter', 'attendee
 export type MeetingRole = (typeof MEETING_ROLES)[number];
 export const RSVP_STATES = ['none', 'accepted', 'tentative', 'declined'] as const;
 export type RsvpState = (typeof RSVP_STATES)[number];
-/** Who skips the lobby. There are no guests yet (Phase 5b), so "everyone" means everyone in the organization. */
+/** Who skips the lobby. "everyone" means everyone in the organization: anonymous guests always wait in the lobby. */
 export const LOBBY_BYPASS = ['everyone', 'invited', 'organizers'] as const;
 export const WHO_CAN_PRESENT = ['everyone', 'organizers', 'specific'] as const;
 export const RECURRENCE_FREQS = ['daily', 'weekly', 'monthly'] as const;
@@ -41,7 +41,14 @@ export const meetingOptionsSchema = z.object({
   allowAttendeeCamera: z.boolean().default(true),
   allowChat: z.boolean().default(true),
   allowReactions: z.boolean().default(true),
-  // Phase 5b extension points: autoRecord, breakoutRooms, whiteboard, allowGuests.
+  /** Start recording when the first person joins. */
+  autoRecord: z.boolean().default(false),
+  /** Anonymous guests may join with the link (name only; always through the lobby). */
+  allowGuests: z.boolean().default(true),
+  allowQna: z.boolean().default(true),
+  /** Attendee questions wait for an organizer to publish them. */
+  moderateQna: z.boolean().default(true),
+  allowWhiteboard: z.boolean().default(true),
 });
 export type MeetingOptions = z.infer<typeof meetingOptionsSchema>;
 export const DEFAULT_MEETING_OPTIONS: MeetingOptions = meetingOptionsSchema.parse({});
@@ -117,6 +124,45 @@ export const hostActionSchema = z.discriminatedUnion('action', [
 export type HostActionInput = z.infer<typeof hostActionSchema>;
 
 export const handSchema = z.object({ raised: z.boolean() });
+
+/** Recordings are kept this many days unless the server overrides it (RECORDING_RETENTION_DAYS). */
+export const DEFAULT_RECORDING_RETENTION_DAYS = 90;
+export const MAX_BREAKOUT_ROOMS = 50;
+
+export const recordingActionSchema = z.object({ recording: z.boolean() });
+
+export const breakoutActionSchema = z.discriminatedUnion('action', [
+  /** Creates (or recreates, replacing the old set) N closed rooms; auto assignment spreads people evenly. */
+  z.object({ action: z.literal('create'), count: z.number().int().min(1).max(MAX_BREAKOUT_ROOMS), assign: z.enum(['auto', 'manual']) }),
+  /** Assigns (or with roomId null unassigns) people; moves them right away while rooms are open. */
+  z.object({ action: z.literal('assign'), userIds: z.array(z.string()).min(1).max(200), roomId: z.string().nullable() }),
+  z.object({ action: z.literal('rename'), roomId: z.string(), name: z.string().trim().min(1).max(60) }),
+  /** Opens the rooms; with a timer they close by themselves. */
+  z.object({ action: z.literal('open'), minutes: z.number().int().min(1).max(240).nullable().default(null) }),
+  z.object({ action: z.literal('close') }),
+  z.object({ action: z.literal('broadcast'), text: z.string().trim().min(1).max(500) }),
+  z.object({ action: z.literal('delete') }),
+]);
+export type BreakoutActionInput = z.input<typeof breakoutActionSchema>;
+
+export const meetingPollSchema = z.object({
+  question: z.string().trim().min(1).max(300),
+  options: z.array(z.string().trim().min(1).max(100)).min(2).max(10),
+  multiple: z.boolean().default(false),
+  anonymous: z.boolean().default(false),
+  /** false = save as a draft to launch later. */
+  launch: z.boolean().default(false),
+});
+export type MeetingPollInput = z.input<typeof meetingPollSchema>;
+export const meetingPollActionSchema = z.object({ action: z.enum(['launch', 'close', 'delete']) });
+export const meetingPollVoteSchema = z.object({ options: z.array(z.number().int().min(0).max(9)).min(1).max(10) });
+
+export const meetingQuestionSchema = z.object({ text: z.string().trim().min(1).max(500), anonymous: z.boolean().default(false) });
+export const meetingQuestionActionSchema = z.object({ action: z.enum(['publish', 'answer', 'dismiss', 'upvote', 'unvote', 'delete']) });
+
+/** Anonymous guest join: name only, from the join link (`/join/<joinCode>`). */
+export const guestJoinSchema = z.object({ code: z.string().trim().min(4).max(32), name: z.string().trim().min(1).max(60) });
+export type GuestJoinInput = z.input<typeof guestJoinSchema>;
 
 export const workingHoursSchema = z.object({
   timeZone: z.string().min(1).max(64),
@@ -218,6 +264,97 @@ export interface MeetingLiveState {
   hands: { userId: string; at: string }[];
   participants: MeetingUser[];
   endedAt: string | null;
+  recording: { startedAt: string; startedBy: string } | null;
+  breakouts: BreakoutState | null;
+}
+
+export interface BreakoutRoomInfo {
+  id: string;
+  name: string;
+  /** Assigned people (whether or not they are in the room right now). */
+  userIds: string[];
+  /** People connected to this room right now. */
+  presentIds: string[];
+}
+
+export interface BreakoutState {
+  open: boolean;
+  /** Timer: when the rooms close by themselves. */
+  endsAt: string | null;
+  rooms: BreakoutRoomInfo[];
+}
+
+/** A LiveKit room to connect to: the main meeting room or a breakout room. */
+export interface MeetingRoomToken {
+  url: string;
+  token: string;
+  roomName: string;
+  /** Null for the main room. */
+  breakoutRoomId: string | null;
+  breakoutName: string | null;
+}
+
+export interface RecordingInfo {
+  id: string;
+  status: 'recording' | 'processing' | 'ready' | 'failed';
+  startedAt: string;
+  endedAt: string | null;
+  durationSec: number | null;
+  size: number | null;
+  startedBy: CallUser;
+  expiresAt: string;
+  /** Signed playback URL once ready. */
+  url: string | null;
+}
+
+export interface MeetingPollInfo {
+  id: string;
+  question: string;
+  options: string[];
+  multiple: boolean;
+  anonymous: boolean;
+  status: 'draft' | 'live' | 'closed';
+  /** Votes per option. Hidden from attendees (empty) until they vote or the poll closes. */
+  counts: number[];
+  voters: number;
+  myVotes: number[];
+  /** Who voted for what (non-anonymous polls, organizers only). */
+  votesByOption: CallUser[][] | null;
+  createdAt: string;
+  launchedAt: string | null;
+}
+
+export interface MeetingQuestionInfo {
+  id: string;
+  text: string;
+  /** Null when anonymous (to everyone except the author). */
+  author: CallUser | null;
+  mine: boolean;
+  status: 'pending' | 'published' | 'answered' | 'dismissed';
+  upvotes: number;
+  upvotedByMe: boolean;
+  createdAt: string;
+}
+
+export interface GuestJoinResult {
+  accessToken: string;
+  user: import('./auth').PublicUser;
+  meetingId: string;
+}
+
+/** Things inside a meeting changed; clients refetch the matching list. */
+export interface MeetingActivityEvent {
+  meetingId: string;
+  kind: 'polls' | 'questions' | 'recordings';
+  /** A poll was just launched (show it to everyone). */
+  launchedPollId?: string;
+}
+
+export interface MeetingBroadcastEvent {
+  meetingId: string;
+  sessionId: string;
+  from: string;
+  text: string;
 }
 
 export type MeetingJoinResult =

@@ -48,6 +48,21 @@ services:
     depends_on:
       - redis
 
+  # OPTIONAL: meeting recordings (room composite -> MP4 in S3). Heavy image (headless Chrome, ~2+ GB disk);
+  # meetings work without it (recording start then fails with a clear error). Start it on its own:
+  #   docker compose -f infra/docker-compose.yml up -d egress
+  egress:
+    image: livekit/egress:latest
+    cap_add:
+      - SYS_ADMIN
+    environment:
+      EGRESS_CONFIG_FILE: /etc/egress.yaml
+    volumes:
+      - ./egress.yaml:/etc/egress.yaml:ro
+    depends_on:
+      - redis
+      - livekit
+
   mailpit:
     image: axllent/mailpit:latest
     ports:

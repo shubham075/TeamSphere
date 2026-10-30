@@ -1,0 +1,9 @@
+# LiveKit Egress (meeting recordings) — development config. Shares LiveKit's Redis and keys.
+# Recordings upload straight to S3; the API passes the bucket and credentials with each request.
+api_key: devkey
+api_secret: devsecret_change_me_at_least_32_chars_long
+ws_url: ws://livekit:7880
+redis:
+  address: redis:6379
+log_level: info
+health_port: 8080

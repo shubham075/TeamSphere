@@ -22,23 +22,25 @@ enum UserRole {
 }
 
 model User {
-  id           String       @id @default(cuid())
-  username     String       @unique
-  email        String?      @unique
-  passwordHash String?
+  id             String       @id @default(cuid())
+  username       String       @unique
+  email          String?      @unique
+  passwordHash   String?
   /// How the account was first created. Linked sign-in methods live in UserIdentity.
-  authProvider AuthProvider @default(local)
-  displayName  String
-  avatarKey    String?
-  jobTitle     String?
-  department   String?
-  office       String?
-  phone        String?
-  managerId    String?
-  manager      User?        @relation("Manager", fields: [managerId], references: [id], onDelete: SetNull)
-  reports      User[]       @relation("Manager")
-  role         UserRole     @default(user)
-  isActive     Boolean      @default(true)
+  authProvider   AuthProvider @default(local)
+  displayName    String
+  avatarKey      String?
+  jobTitle       String?
+  department     String?
+  office         String?
+  phone          String?
+  managerId      String?
+  manager        User?        @relation("Manager", fields: [managerId], references: [id], onDelete: SetNull)
+  reports        User[]       @relation("Manager")
+  role           UserRole     @default(user)
+  isActive       Boolean      @default(true)
+  /// Anonymous meeting guests (role guest): the one meeting this account may use. Null for everyone else.
+  guestMeetingId String?
 
   teamMemberships    TeamMember[]
   channelMemberships ChannelMember[]
@@ -817,8 +819,12 @@ model Meeting {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  attendees MeetingAttendee[]
-  sessions  MeetingSession[]
+  attendees  MeetingAttendee[]
+  sessions   MeetingSession[]
+  recordings Recording[]
+  polls      MeetingPoll[]
+  questions  MeetingQuestion[]
+  whiteboard MeetingWhiteboard?
 
   @@index([conversationId])
   @@index([startAt])
@@ -877,4 +883,107 @@ model WorkingHours {
   startMinute Int
   endMinute   Int
   updatedAt   DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------- Phase 5b: meetings advanced
+
+enum RecordingStatus {
+  recording
+  processing
+  ready
+  failed
+}
+
+/// One LiveKit Egress room-composite recording (MP4 in S3). Deleted (row + object) after expiresAt.
+model Recording {
+  id          String          @id @default(cuid())
+  meetingId   String
+  meeting     Meeting         @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  sessionId   String
+  egressId    String?         @unique
+  storageKey  String
+  status      RecordingStatus @default(recording)
+  startedById String
+  startedAt   DateTime        @default(now())
+  endedAt     DateTime?
+  durationSec Int?
+  size        BigInt?
+  error       String?
+  expiresAt   DateTime
+
+  @@index([meetingId])
+  @@index([expiresAt])
+}
+
+enum MeetingPollStatus {
+  draft
+  live
+  closed
+}
+
+/// Meeting poll: pre-created as a draft, launched live during the meeting, then closed (results stay).
+model MeetingPoll {
+  id          String            @id @default(cuid())
+  meetingId   String
+  meeting     Meeting           @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  question    String
+  options     String[]
+  multiple    Boolean           @default(false)
+  anonymous   Boolean           @default(false)
+  status      MeetingPollStatus @default(draft)
+  createdById String
+  createdAt   DateTime          @default(now())
+  launchedAt  DateTime?
+  closedAt    DateTime?
+  votes       MeetingPollVote[]
+
+  @@index([meetingId])
+}
+
+model MeetingPollVote {
+  pollId    String
+  poll      MeetingPoll @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  userId    String
+  option    Int
+  createdAt DateTime    @default(now())
+
+  @@id([pollId, userId, option])
+}
+
+enum MeetingQuestionStatus {
+  pending
+  published
+  answered
+  dismissed
+}
+
+/// Q&A: attendee questions wait as pending until an organizer publishes them (when moderated); upvotes rank them.
+model MeetingQuestion {
+  id        String                @id @default(cuid())
+  meetingId String
+  meeting   Meeting               @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  authorId  String
+  text      String
+  anonymous Boolean               @default(false)
+  status    MeetingQuestionStatus @default(pending)
+  createdAt DateTime              @default(now())
+  votes     MeetingQuestionVote[]
+
+  @@index([meetingId])
+}
+
+model MeetingQuestionVote {
+  questionId String
+  question   MeetingQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  userId     String
+
+  @@id([questionId, userId])
+}
+
+/// The meeting whiteboard as a Yjs document update (Y.encodeStateAsUpdate), co-edited over Socket.IO.
+model MeetingWhiteboard {
+  meetingId String   @id
+  meeting   Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  state     Bytes
+  updatedAt DateTime @updatedAt
 }

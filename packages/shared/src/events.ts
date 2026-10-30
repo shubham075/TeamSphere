@@ -28,6 +28,15 @@ export const WS_EVENTS = {
   /** Live state of an in-progress meeting (lobby, hands, lock, roster). */
   meetingUpdated: 'meeting:updated',
   meetingReminder: 'meeting:reminder',
+  /** Polls / Q&A / recordings of a meeting changed (refetch). */
+  meetingActivity: 'meeting:activity',
+  /** Organizer message to everyone in breakout rooms. */
+  meetingBroadcast: 'meeting:broadcast',
+  /** Whiteboard (Yjs over Socket.IO): join → full state; update ↔ incremental updates; leave. */
+  whiteboardJoin: 'whiteboard:join',
+  whiteboardUpdate: 'whiteboard:update',
+  whiteboardAwareness: 'whiteboard:awareness',
+  whiteboardLeave: 'whiteboard:leave',
   notificationNew: 'notification:new',
   channelUpdated: 'channel:updated',
   teamUpdated: 'team:updated',
