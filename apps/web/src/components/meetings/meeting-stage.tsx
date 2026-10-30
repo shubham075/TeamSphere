@@ -38,9 +38,18 @@ export function MeetingStage({ meeting, join, choices, meId, onEnd }: {
   meId: string;
   onEnd: (why: StageEnd) => void;
 }) {
-  const room = useMemo(() => {
+  const [room, setRoom] = useState<Room | null>(null);
+  const [connected, setConnected] = useState(false);
+  const [state, setState] = useState<MeetingLiveState>(join.state);
+  const [error, setError] = useState<string | null>(null);
+  const endRef = useRef(onEnd);
+  endRef.current = onEnd;
+
+  // One Room per effect run, so a dev-mode double mount can't abort and report the real connection.
+  useEffect(() => {
+    let left = false;
     const prefs = getDevicePrefs();
-    return new Room({
+    const r = new Room({
       adaptiveStream: true,
       dynacast: true,
       audioCaptureDefaults: { deviceId: prefs.audioinput, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
@@ -48,35 +57,28 @@ export function MeetingStage({ meeting, join, choices, meId, onEnd }: {
       audioOutput: { deviceId: prefs.audiooutput },
       publishDefaults: { simulcast: true },
     });
-  }, []);
-  const [connected, setConnected] = useState(false);
-  const [state, setState] = useState<MeetingLiveState>(join.state);
-  const [error, setError] = useState<string | null>(null);
-  const endRef = useRef(onEnd);
-  endRef.current = onEnd;
-
-  useEffect(() => {
-    let left = false;
-    room.on(RoomEvent.Disconnected, (reason) => {
+    setRoom(r);
+    r.on(RoomEvent.Disconnected, (reason) => {
       if (left || reason === DisconnectReason.CLIENT_INITIATED) return;
       endRef.current(reason === DisconnectReason.PARTICIPANT_REMOVED ? 'removed' : reason === DisconnectReason.ROOM_DELETED ? 'ended' : 'disconnected');
     });
     (async () => {
       try {
-        await room.connect(join.url, join.token);
+        await r.connect(join.url, join.token);
       } catch {
-        setError("Couldn't reach the meeting server.");
+        if (!left) setError("Couldn't reach the meeting server.");
         return;
       }
+      if (left) return;
       setConnected(true);
-      if (choices.mic && !choices.audioOff) await room.localParticipant.setMicrophoneEnabled(true).catch(() => setError('Your microphone is unavailable or not allowed.'));
-      if (choices.camera) await room.localParticipant.setCameraEnabled(true).catch(() => setError('Your camera is unavailable or not allowed.'));
+      if (choices.mic && !choices.audioOff) await r.localParticipant.setMicrophoneEnabled(true).catch(() => !left && setError('Your microphone is unavailable or not allowed.'));
+      if (choices.camera) await r.localParticipant.setCameraEnabled(true).catch(() => !left && setError('Your camera is unavailable or not allowed.'));
     })();
     return () => {
       left = true;
-      void room.disconnect();
+      void r.disconnect();
     };
-  }, [room, join.url, join.token, choices]);
+  }, [join.url, join.token, choices]);
 
   // Live state (lobby, hands, lock, roster) pushed by the API.
   useEffect(() => {
@@ -90,6 +92,7 @@ export function MeetingStage({ meeting, join, choices, meId, onEnd }: {
     return () => void socket.off(WS_EVENTS.meetingUpdated, onUpdate);
   }, [join.state.sessionId]);
 
+  if (!room) return null;
   return (
     <RoomContext.Provider value={room}>
       <RoomAudioRenderer muted={choices.audioOff} />
@@ -442,7 +445,9 @@ function ChatPanel({ meeting, meId, onClose }: { meeting: MeetingInfo; meId: str
   const [error, setError] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const messages: MessageInfo[] = useMemo(() => (data ? [...data.pages].reverse().flatMap((p) => p.messages) : []), [data]);
-  useEffect(() => endRef.current?.scrollIntoView({ block: 'end' }), [messages.length]);
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: 'end' });
+  }, [messages.length]);
 
   async function sendMessage() {
     const body = text.trim();

@@ -28,7 +28,9 @@ function OptionsForm({ meeting }: { meeting: MeetingInfo }) {
   const [roles, setRoles] = useState<Record<string, MeetingRole>>(() => Object.fromEntries(meeting.attendees.map((a) => [a.user.id, a.role])));
   const [status, setStatus] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  useEffect(() => setOptions(meeting.options), [meeting.options]);
+  useEffect(() => {
+    setOptions(meeting.options);
+  }, [meeting.options]);
   const set = <K extends keyof MeetingOptions>(k: K, v: MeetingOptions[K]) => setOptions((o) => ({ ...o, [k]: v }));
 
   async function save() {
