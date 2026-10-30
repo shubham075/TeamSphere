@@ -280,6 +280,9 @@ Firewall: **443/TCP** (HTTPS + TURN/TLS), **7881/TCP** and **50000–60000/UDP**
    (or the server's LAN IP), and enable TURN/TLS on 443 for restrictive networks.
 7. Nightly backups: `pg_dump` of PostgreSQL and replication of the S3 bucket.
 
+For container images, build the web app with `NEXT_STANDALONE=true` (Next's standalone output). It is off by
+default because it creates symlinks, which Windows refuses without Developer Mode.
+
 A one-command production compose file (`infra/docker-compose.prod.yml`) is on the roadmap.
 
 ---

@@ -188,6 +188,26 @@
         "API_URL": "http://127.0.0.1:4014",
         "NEXT_PUBLIC_SOCKET_PORT": "4014"
       }
+    },
+    {
+      "name": "api-prod",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--dir",
+        "apps/api",
+        "start"
+      ],
+      "port": 4000
+    },
+    {
+      "name": "web-prod",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--dir",
+        "apps/web",
+        "start"
+      ],
+      "port": 4001
     }
   ]
 }
