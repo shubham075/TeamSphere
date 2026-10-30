@@ -2,7 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundEx
 import { Prisma } from '@prisma/client';
 import {
   ActivityItem, AddMembersInput, ChatSectionInfo, ConversationInfo, CreateConversationInput, extractMentionIds,
-  MAX_GROUP_MEMBERS, MemberSettingsInput, MessageInfo, MessagePage, PollInput, ReactionEvent, ReadEvent,
+  MAX_ATTACHMENT_BYTES, MAX_GROUP_MEMBERS, MemberSettingsInput, MessageInfo, MessagePage, PollInput, ReactionEvent, ReadEvent,
   SavedMessageInfo, ScheduledMessageInfo, toPlainText, WS_EVENTS,
 } from '@teamsphere/shared';
 import { PrismaService } from '../prisma/prisma.service';
@@ -11,6 +11,8 @@ import { isOutOfOffice, PresenceService } from '../presence/presence.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { avatarUrl, MESSAGE_INCLUDE, summarizeReactions, toMessageInfo, toUserSummary } from './chat.mapper';
 import { firstUrl, LinkPreviewService } from './link-preview.service';
+import { PolicyService } from '../admin/policy.service';
+import { OrgService } from '../admin/org.service';
 
 const USER_SELECT = { id: true, displayName: true, avatarKey: true, jobTitle: true } as const;
 
@@ -47,6 +49,8 @@ export class ChatService {
     private readonly presence: PresenceService,
     private readonly realtime: RealtimeService,
     private readonly linkPreviews: LinkPreviewService,
+    private readonly policies: PolicyService,
+    private readonly org: OrgService,
   ) {}
 
   // ------------------------------------------------------------------ conversations
@@ -227,6 +231,7 @@ export class ChatService {
     const conversation = await this.requireMembership(me, id);
     // Channel posts go through ChannelPostsService, which applies moderation and threading.
     if (conversation.type === 'channel') throw new BadRequestException('Post in the channel instead');
+    if (input.importance === 'urgent') await this.assertUrgentAllowed(me);
     const memberIds = conversation.members.map((m) => m.userId);
     const body = (input.body ?? '').trim();
 
@@ -282,6 +287,7 @@ export class ChatService {
 
   async edit(me: string, messageId: string, body: string): Promise<MessageInfo> {
     const message = await this.ownMessage(me, messageId);
+    await this.policies.assert(me, (p) => p.messaging.allowEdit, 'Your organization’s policy doesn’t allow editing sent messages');
     const members = await this.memberIds(message.conversationId);
     const mentionIds = extractMentionIds(body).filter((uid) => members.includes(uid));
     const linkChanged = firstUrl(body) !== firstUrl(message.body);
@@ -303,6 +309,7 @@ export class ChatService {
 
   async remove(me: string, messageId: string): Promise<MessageInfo> {
     const message = await this.ownMessage(me, messageId);
+    await this.policies.assert(me, (p) => p.messaging.allowDelete, 'Your organization’s policy doesn’t allow deleting sent messages');
     const attachments = await this.prisma.attachment.findMany({ where: { messageId } });
     const updated = await this.prisma.message.update({
       where: { id: messageId },
@@ -448,6 +455,7 @@ export class ChatService {
 
   async schedule(me: string, id: string, input: Omit<SendInput, 'poll' | 'clientId'> & { sendAt: string }): Promise<ScheduledMessageInfo> {
     await this.requireMembership(me, id);
+    if (input.importance === 'urgent') await this.assertUrgentAllowed(me);
     const sendAt = new Date(input.sendAt);
     const delay = sendAt.getTime() - Date.now();
     if (delay < MIN_SCHEDULE_MS) throw new BadRequestException('Pick a time at least a minute from now');
@@ -515,6 +523,7 @@ export class ChatService {
 
   async addAttachment(me: string, conversationId: string, file: { originalname: string; mimetype: string; size: number }, store: (key: string) => Promise<void>) {
     await this.requireMembership(me, conversationId);
+    await this.org.assertUploadSize(file.size, MAX_ATTACHMENT_BYTES);
     const key = `attachments/${conversationId}/${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     await store(key);
     const attachment = await this.prisma.attachment.create({
@@ -625,10 +634,23 @@ export class ChatService {
   }
 
   /** Fetches a link preview after sending, then pushes the updated message. Never blocks or fails the send. */
+  /** Urgent messages notify repeatedly, so the messaging policy can withhold them. Exposed for channel posts. */
+  async assertUrgentAllowed(me: string) {
+    await this.policies.assert(me, (p) => p.messaging.allowUrgent, 'Your organization’s policy doesn’t allow urgent messages');
+  }
+
+  /** Off when disabled server-wide, org-wide (admin setting) or by the author's messaging policy. */
+  async previewsAllowed(authorId: string): Promise<boolean> {
+    if (!this.linkPreviews.enabled || !(await this.org.settings()).linkPreviews) return false;
+    return (await this.policies.effective(authorId)).messaging.linkPreviews;
+  }
+
   private unfurl(messageId: string, body: string, memberIds: string[]) {
     const url = this.linkPreviews.enabled ? firstUrl(body) : null;
     if (!url) return;
     void (async () => {
+      const author = await this.prisma.message.findUnique({ where: { id: messageId }, select: { authorId: true } });
+      if (!author?.authorId || !(await this.previewsAllowed(author.authorId))) return;
       const preview = await this.linkPreviews.preview(url);
       if (!preview) return;
       // Only apply if the message still links to the same URL (it may have been edited or deleted meanwhile).

@@ -6,14 +6,17 @@ import { FileItem, Prisma } from '@prisma/client';
 import {
   AccessRequestInfo, AccessRequestInput, ActivityItem, ChatFileInfo, CreateFolderInput, DecideAccessRequestInput,
   FILE_WS_EVENTS, FileActivityType, FileCrumb, FileDetail, FileItemInfo, FileNoAccessInfo, FileOwnerType, FilePerson,
-  FileRole, FileSharingInfo, FileShareRole, FileVersionInfo, FolderListing, ShareFileInput, ShareLinkInfo,
+  FileRole, FileSharingInfo, FileShareRole, FileVersionInfo, FolderListing, MAX_FILE_BYTES, ShareFileInput, ShareLinkInfo,
   WS_EVENTS,
 } from '@teamsphere/shared';
 import { randomBytes } from 'node:crypto';
 import { AuditService } from '../audit/audit.service';
+import { PolicyService } from '../admin/policy.service';
+import { OrgService } from '../admin/org.service';
 import { StorageService } from '../infra/storage';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
+import { likePattern, toTsQuery } from '../search/search.logic';
 import { FileLibraries } from './file-libraries';
 import { AccessNode, can, effectiveRole, FileAction, maxRole, nextVersion, planRestore, planUpload, purgeCutoff, uniqueName } from './files.logic';
 
@@ -48,6 +51,8 @@ export class FilesService implements OnModuleInit, OnModuleDestroy {
     private readonly realtime: RealtimeService,
     private readonly audit: AuditService,
     private readonly libraries: FileLibraries,
+    private readonly policies: PolicyService,
+    private readonly org: OrgService,
   ) {}
 
   onModuleInit() {
@@ -153,7 +158,10 @@ export class FilesService implements OnModuleInit, OnModuleDestroy {
   async search(me: string, q: string): Promise<FileItemInfo[]> {
     const term = q.trim();
     if (!term) return [];
-    const pattern = `%${term.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    const pattern = likePattern(term);
+    const tsq = toTsQuery(term);
+    // Word-prefix full-text match (GIN index) so "budget" finds "Q3-budget.xlsx", plus substring match for partial names.
+    const nameMatch = tsq ? Prisma.sql`(name ILIKE ${pattern} OR "searchVector" @@ to_tsquery('simple', ${tsq}))` : Prisma.sql`name ILIKE ${pattern}`;
     const rows = await this.prisma.$queryRaw<{ id: string }[]>`
       WITH RECURSIVE roots AS (
         SELECT "itemId" AS id FROM "FileShare" WHERE "userId" = ${me}
@@ -166,7 +174,7 @@ export class FilesService implements OnModuleInit, OnModuleDestroy {
         SELECT f.id FROM "FileItem" f JOIN tree t ON f."parentId" = t.id
       )
       SELECT id FROM "FileItem"
-      WHERE "deletedAt" IS NULL AND name ILIKE ${pattern}
+      WHERE "deletedAt" IS NULL AND ${nameMatch}
         AND (("ownerType" = 'user' AND "ownerId" = ${me}) OR id IN (SELECT id FROM tree)
           OR ("ownerType" = 'channel' AND "ownerId" IN (
             SELECT c.id FROM "Channel" c JOIN "ConversationMember" m ON m."conversationId" = c."conversationId"
@@ -257,8 +265,15 @@ export class FilesService implements OnModuleInit, OnModuleDestroy {
     return (await this.present([folder], () => target.role))[0];
   }
 
+  /** The apps policy can turn Files off for someone; the org caps upload size. */
+  private async assertCanUpload(me: string, size: number) {
+    await this.policies.assert(me, (p) => p.apps.files, 'Your organization’s policy doesn’t allow you to upload files');
+    await this.org.assertUploadSize(size, MAX_FILE_BYTES);
+  }
+
   /** Upload into a folder. A file with the same name there gets a new version instead of a duplicate. */
   async upload(me: string, parentId: string | null, file: UploadedContent, ctx: Ctx, library?: Library): Promise<FileItemInfo & { versioned: boolean }> {
+    await this.assertCanUpload(me, file.size);
     const target = await this.target(me, parentId, library);
     const existing = await this.sibling(target, file.name);
     const plan = planUpload(existing);
@@ -295,6 +310,7 @@ export class FilesService implements OnModuleInit, OnModuleDestroy {
   async addVersion(me: string, id: string, file: UploadedContent, ctx: Ctx): Promise<FileItemInfo> {
     const access = await this.require(me, id, 'write');
     if (access.item.kind !== 'file') throw new BadRequestException('Folders have no versions');
+    await this.assertCanUpload(me, file.size);
     const key = this.newKey(access.item);
     await file.store(key);
     try {

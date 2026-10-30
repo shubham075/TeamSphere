@@ -12,6 +12,8 @@ import {
   UpdateMeetingInput, UpdateMeetingOptionsInput, WorkingHours, WS_EVENTS,
 } from '@teamsphere/shared';
 import { AuditService } from '../audit/audit.service';
+import { PolicyService } from '../admin/policy.service';
+import { OrgService } from '../admin/org.service';
 import { SessionService } from '../auth/session.service';
 import { toPublicUser } from '../users/users.mapper';
 import { NOTIFICATION_INCLUDE, toActivityItem, toCallUser } from '../calls/calls.mapper';
@@ -112,6 +114,8 @@ export class MeetingsService implements OnModuleInit, OnModuleDestroy {
     private readonly audit: AuditService,
     private readonly recordings: RecordingsService,
     private readonly sessions: SessionService,
+    private readonly policies: PolicyService,
+    private readonly org: OrgService,
   ) {}
 
   onModuleInit() {
@@ -195,6 +199,7 @@ export class MeetingsService implements OnModuleInit, OnModuleDestroy {
 
   async create(me: string, raw: CreateMeetingInput): Promise<MeetingInfo> {
     const input = createMeetingSchema.parse(raw);
+    const options = await this.defaultOptions(me);
     if (!isValidTimeZone(input.timeZone)) throw new BadRequestException('Unknown time zone');
     const attendees = input.attendees.filter((a) => a.userId !== me);
     await this.assertActiveUsers(attendees.map((a) => a.userId));
@@ -210,7 +215,7 @@ export class MeetingsService implements OnModuleInit, OnModuleDestroy {
         organizerId: me, title: input.title, description: input.description, location: input.location,
         startAt: new Date(input.startAt), endAt: new Date(input.endAt), timeZone: input.timeZone,
         recurrence: (input.recurrence ?? Prisma.DbNull) as Prisma.InputJsonValue, joinCode: await this.newJoinCode(),
-        options: DEFAULT_MEETING_OPTIONS, conversationId, channelId: input.channelId,
+        options, conversationId, channelId: input.channelId,
         attendees: { create: [{ userId: me, role: 'organizer', rsvp: 'accepted' }, ...attendees.map((a) => ({ userId: a.userId, required: a.required }))] },
       },
       include: MEETING_INCLUDE,
@@ -247,7 +252,7 @@ export class MeetingsService implements OnModuleInit, OnModuleDestroy {
     const m = await this.prisma.meeting.create({
       data: {
         organizerId: me, title, startAt: now, endAt: new Date(now.getTime() + INSTANT_MINUTES * 60_000), joinCode: await this.newJoinCode(),
-        options: DEFAULT_MEETING_OPTIONS, conversationId, channelId: input.channelId ?? null, isInstant: true,
+        options: await this.defaultOptions(me), conversationId, channelId: input.channelId ?? null, isInstant: true,
         attendees: { create: [{ userId: me, role: 'organizer', rsvp: 'accepted' }, ...attendeeIds.map((userId) => ({ userId }))] },
       },
       include: MEETING_INCLUDE,
@@ -517,6 +522,7 @@ export class MeetingsService implements OnModuleInit, OnModuleDestroy {
     const m = await this.prisma.meeting.findUnique({ where: { joinCode: code.replace(/\s+/g, '') }, include: MEETING_INCLUDE });
     if (!m || m.cancelledAt) throw new NotFoundException('No meeting with that link');
     if (!this.options(m).allowGuests) throw new ForbiddenException('This meeting doesn’t allow guests');
+    await this.org.assertGuestAccess();
     const user = await this.prisma.user.create({
       data: { username: `guest-${randomUUID()}`, displayName: guestDisplayName(name), role: 'guest', guestMeetingId: m.id },
     });
@@ -655,7 +661,15 @@ export class MeetingsService implements OnModuleInit, OnModuleDestroy {
     return this.recordings.list(meetingId);
   }
 
+  /** New meetings start from the defaults, with the organizer's meeting policy picking who skips the lobby. */
+  private async defaultOptions(me: string) {
+    const policy = await this.policies.effective(me);
+    if (!policy.apps.meetings) throw new ForbiddenException('Your organization’s policy doesn’t allow you to schedule meetings');
+    return { ...DEFAULT_MEETING_OPTIONS, lobbyBypass: policy.meeting.lobbyDefault };
+  }
+
   private async startRecording(m: MeetingRow, live: Live, by: string) {
+    await this.policies.assert(by, (p) => p.meeting.allowRecording, 'Your organization’s policy doesn’t allow recording meetings');
     const rec = await this.recordings.start(m.id, live.sessionId, live.roomName, by);
     live.recording = { id: rec.id, startedAt: rec.startedAt, startedBy: by };
     await this.chat.postSystemMessage(m.conversationId, by, '{actor} started recording. It will be listed with the meeting details.');

@@ -11,6 +11,7 @@ import {
   RING_TIMEOUT_MS, SpeedDialEntry, VoicemailInfo, WS_EVENTS,
 } from '@teamsphere/shared';
 import { AuditService } from '../audit/audit.service';
+import { PolicyService } from '../admin/policy.service';
 import { MESSAGE_INCLUDE, toMessageInfo } from '../chat/chat.mapper';
 import { StorageService } from '../infra/storage';
 import { PresenceService } from '../presence/presence.service';
@@ -57,6 +58,7 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
     private readonly realtime: RealtimeService,
     private readonly livekit: LivekitService,
     private readonly audit: AuditService,
+    private readonly policies: PolicyService,
   ) {}
 
   async onModuleInit() {
@@ -80,6 +82,9 @@ export class CallsService implements OnModuleInit, OnModuleDestroy {
   // ------------------------------------------------------------------ lifecycle
 
   async start(me: string, input: { conversationId?: string; userId?: string; kind: CallKind }): Promise<CallJoinInfo> {
+    const policy = await this.policies.effective(me);
+    if (!policy.calling.allowCalls || !policy.apps.calls) throw new ForbiddenException('Your organization’s policy doesn’t allow you to make calls');
+    if (input.kind === 'video' && !policy.calling.allowVideo) throw new ForbiddenException('Your organization’s policy allows audio calls only');
     const conversation = input.userId ? await this.directConversation(me, input.userId) : await this.memberConversation(me, input.conversationId!);
     if (conversation.type === 'self') throw new BadRequestException("You can't call yourself");
     if (conversation.type !== 'direct' && conversation.type !== 'group') {

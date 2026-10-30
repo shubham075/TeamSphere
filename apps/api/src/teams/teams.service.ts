@@ -9,6 +9,7 @@ import {
   TagInfo, TeamInfo, TeamMemberInfo, TeamUpdatedEvent, UpdateChannelInput, UpdateTeamInput, UserRole, WS_EVENTS,
 } from '@teamsphere/shared';
 import { AuditService } from '../audit/audit.service';
+import { OrgService } from '../admin/org.service';
 import { avatarUrl, toUserSummary } from '../chat/chat.mapper';
 import { PresenceService } from '../presence/presence.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -41,6 +42,7 @@ export class TeamsService implements OnModuleInit, OnModuleDestroy {
     private readonly presence: PresenceService,
     private readonly realtime: RealtimeService,
     private readonly audit: AuditService,
+    private readonly org: OrgService,
   ) {}
 
   onModuleInit() {
@@ -318,6 +320,7 @@ export class TeamsService implements OnModuleInit, OnModuleDestroy {
 
   async addMembers(me: string, teamId: string, userIds: string[], role: TeamRole): Promise<TeamMemberInfo[]> {
     await this.requireTeamRole(me, teamId, ['owner']);
+    if (role === 'guest') await this.org.assertGuestAccess();
     const existing = new Set((await this.prisma.teamMember.findMany({ where: { teamId }, select: { userId: true } })).map((m) => m.userId));
     const added = (await this.activeUserIds([...new Set(userIds)])).filter((id) => !existing.has(id));
     if (added.length) {
@@ -729,7 +732,7 @@ export class TeamsService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** After team membership changes: the team's standard channels and shared channels that are shared into it. */
-  private async syncTeamChannels(teamId: string) {
+  async syncTeamChannels(teamId: string) {
     const channels = await this.prisma.channel.findMany({
       where: { OR: [{ teamId }, { shares: { some: { teamId } } }] },
       select: { id: true },
@@ -835,11 +838,11 @@ export class TeamsService implements OnModuleInit, OnModuleDestroy {
     return [...new Set([...members.map((m) => m.userId), ...viaChannels.map((m) => m.userId)])];
   }
 
-  private async emitTeam(teamId: string) {
+  async emitTeam(teamId: string) {
     this.realtime.toUsers(await this.teamAudience(teamId), WS_EVENTS.teamUpdated, { teamId } satisfies TeamUpdatedEvent);
   }
 
-  private async emitChannel(channel: { id: string; teamId: string; conversationId: string }) {
+  async emitChannel(channel: { id: string; teamId: string; conversationId: string }) {
     this.realtime.toUsers(await this.conversationMemberIds(channel.conversationId), WS_EVENTS.channelUpdated, {
       channelId: channel.id,
       teamId: channel.teamId,

@@ -9,6 +9,7 @@ import { MESSAGE_INCLUDE, MessageRow, toMessageInfo } from '../chat/chat.mapper'
 import { StorageService } from '../infra/storage';
 import { PrismaService } from '../prisma/prisma.service';
 import { RealtimeService } from '../realtime/realtime.service';
+import { PolicyService } from '../admin/policy.service';
 import { resolveMentions } from './teams.policy';
 import { ChannelAccess, TeamsService } from './teams.service';
 
@@ -34,6 +35,7 @@ export class ChannelPostsService {
     private readonly realtime: RealtimeService,
     private readonly audit: AuditService,
     private readonly teams: TeamsService,
+    private readonly policies: PolicyService,
   ) {}
 
   async posts(me: string, channelId: string, before?: string): Promise<ChannelPostPage> {
@@ -51,6 +53,9 @@ export class ChannelPostsService {
   }
 
   async post(me: string, channelId: string, input: PostInput): Promise<ChannelPost[]> {
+    if (input.importance === 'urgent') {
+      await this.policies.assert(me, (p) => p.messaging.allowUrgent, 'Your organization’s policy doesn’t allow urgent messages');
+    }
     const targets = [channelId, ...input.alsoChannelIds.filter((id) => id !== channelId)];
     const accesses: ChannelAccess[] = [];
     for (const id of [...new Set(targets)]) {
@@ -162,6 +167,9 @@ export class ChannelPostsService {
     const message = await this.prisma.message.findFirst({ where: { id: messageId, conversationId: access.channel.conversationId, deletedAt: null } });
     if (!message) throw new NotFoundException('Message not found');
     if (message.authorId !== me && !access.permissions.moderate) throw new ForbiddenException('You can’t delete this message');
+    if (message.authorId === me && !access.permissions.moderate) {
+      await this.policies.assert(me, (p) => p.messaging.allowDelete, 'Your organization’s policy doesn’t allow deleting sent messages');
+    }
     const attachments = await this.prisma.attachment.findMany({ where: { messageId } });
     const updated = await this.prisma.message.update({
       where: { id: messageId },

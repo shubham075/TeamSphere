@@ -1,6 +1,8 @@
 /** Socket.IO event names shared by the API gateway and the clients (see SOURCE_OF_TRUTH §6). */
 export const WS_EVENTS = {
   presenceChanged: 'presence:changed',
+  /** Org settings or policies changed: clients refetch /org and /me/policies. */
+  orgUpdated: 'org:updated',
   messageNew: 'message:new',
   messageUpdated: 'message:updated',
   messageDeleted: 'message:deleted',

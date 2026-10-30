@@ -89,6 +89,8 @@ model User {
   callAlsoRingFor    CallSettings[]    @relation("CallAlsoRing")
   speedDials         SpeedDial[]       @relation("SpeedDialOwner")
   speedDialedBy      SpeedDial[]       @relation("SpeedDialContact")
+
+  policyAssignments PolicyAssignment[]
 }
 
 /// A directory sign-in linked to a user. One person can have both an AD and an Entra identity (hybrid AD).
@@ -228,7 +230,12 @@ model Message {
   savedBy       SavedMessage[]
   poll          Poll?
 
+  /// Full-text search vector over `body`: a GENERATED column (see the admin_search migration). Prisma reads the
+  /// generation expression as a default, so it is mirrored here to keep `migrate dev` from emitting DROP DEFAULT.
+  searchVector Unsupported("tsvector")? @default(dbgenerated("to_tsvector('english'::regconfig, body)"))
+
   @@index([conversationId, createdAt])
+  @@index([searchVector], type: Gin)
 }
 
 model SavedMessage {
@@ -689,7 +696,11 @@ model FileItem {
   requests FileAccessRequest[]
   recents  FileRecent[]
 
+  /// Full-text search vector over `name`: a GENERATED column (see the admin_search migration; default mirrors it).
+  searchVector Unsupported("tsvector")? @default(dbgenerated("to_tsvector('simple'::regconfig, regexp_replace(name, '[._-]+'::text, ' '::text, 'g'::text))"))
+
   @@index([ownerType, ownerId, parentId])
+  @@index([searchVector], type: Gin)
   @@index([parentId])
   @@index([inRecycleBin, deletedAt])
 }
@@ -986,4 +997,47 @@ model MeetingWhiteboard {
   meeting   Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
   state     Bytes
   updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------- Phase 7: admin, policies, search
+
+/// Singleton row (id "org"): OrgSettings DTO plus the uploaded logo.
+model OrgSetting {
+  id        String   @id @default("org")
+  settings  Json     @default("{}")
+  logoKey   String?
+  updatedAt DateTime @updatedAt
+}
+
+/// A named set of settings of one type (messaging | meeting | calling | apps); see shared POLICY_SCHEMAS.
+model Policy {
+  id          String   @id @default(cuid())
+  type        String
+  name        String
+  description String   @default("")
+  settings    Json     @default("{}")
+  /// The org-wide default for its type (at most one per type).
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  assignments PolicyAssignment[]
+
+  @@unique([type, name])
+  @@index([type])
+}
+
+/// Assigns a policy to one user or to every member of a team (the "group"). Direct user assignments win.
+model PolicyAssignment {
+  id       String  @id @default(cuid())
+  policyId String
+  policy   Policy  @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  userId   String?
+  user     User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  teamId   String?
+
+  @@unique([policyId, userId])
+  @@unique([policyId, teamId])
+  @@index([userId])
+  @@index([teamId])
 }

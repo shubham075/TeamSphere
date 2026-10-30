@@ -7,3 +7,5 @@ export * from './calls';
 export * from './teams';
 export * from './files';
 export * from './meetings';
+export * from './admin';
+export * from './search';
