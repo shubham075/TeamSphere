@@ -132,6 +132,34 @@
         "API_URL": "http://127.0.0.1:4010",
         "NEXT_PUBLIC_SOCKET_PORT": "4010"
       }
+    },
+    {
+      "name": "api-meetings-b",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--dir",
+        "apps/api",
+        "dev"
+      ],
+      "port": 4012
+    },
+    {
+      "name": "web-meetings-b",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--dir",
+        "apps/web",
+        "exec",
+        "next",
+        "dev",
+        "--port",
+        "4013"
+      ],
+      "port": 4013,
+      "env": {
+        "API_URL": "http://127.0.0.1:4012",
+        "NEXT_PUBLIC_SOCKET_PORT": "4012"
+      }
     }
   ]
 }

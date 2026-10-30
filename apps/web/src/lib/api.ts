@@ -19,6 +19,8 @@ let refreshing: Promise<AuthResponse | null> | null = null;
  * reached or errors (e.g. restarting), so callers can retry instead of signing the user out.
  */
 export function refreshSession(): Promise<AuthResponse | null> {
+  // Meeting guests have no refresh cookie; refreshing could pick up a signed-in user's session in this browser.
+  if (useAuth.getState().user?.role === 'guest') return Promise.resolve(null);
   refreshing ??= fetch('/api/auth/refresh', {
     method: 'POST',
     credentials: 'include',

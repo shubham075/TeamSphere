@@ -15,6 +15,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
   // (restart, deploy), keep retrying rather than sending the user to the sign-in page.
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;
+    // The guest join page signs in as a meeting guest itself.
+    if (location.pathname.startsWith('/join/')) return;
     const attempt = () =>
       refreshSession()
         .then((s) => {

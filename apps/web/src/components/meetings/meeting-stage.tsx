@@ -7,12 +7,13 @@ import {
 import clsx from 'clsx';
 import { DisconnectReason, Room, RoomEvent, Track, VideoPresets } from 'livekit-client';
 import {
-  Hand, LayoutGrid, Lock, LockOpen, MessageSquare, Mic, MicOff, MonitorUp, MonitorX, PhoneOff, Presentation, Send, Smile,
-  UserMinus, Users, Video, VideoOff, X,
+  BarChart3, Circle, DoorOpen, Hand, LayoutGrid, Lock, LockOpen, MessageCircleQuestion, MessageSquare, Mic, MicOff, MonitorUp,
+  MonitorX, PenLine, PhoneOff, Presentation, Send, Smile, UserMinus, Users, Video, VideoOff, X,
 } from 'lucide-react';
+import dynamic from 'next/dynamic';
 import Link from 'next/link';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import type { MeetingInfo, MeetingLiveState, MeetingRole, MessageInfo } from '@teamsphere/shared';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { MeetingBroadcastEvent, MeetingInfo, MeetingLiveState, MeetingRole, MeetingRoomToken, MessageInfo } from '@teamsphere/shared';
 import { WS_EVENTS } from '@teamsphere/shared';
 import { Avatar } from '@/components/avatar';
 import { RichText } from '@/components/chat/rich-text';
@@ -20,9 +21,13 @@ import { api } from '@/lib/api';
 import { formatCallDuration } from '@/lib/calls';
 import { useMessages } from '@/lib/chat';
 import { getDevicePrefs } from '@/lib/devices';
-import { ROLE_LABEL } from '@/lib/meetings';
+import { ROLE_LABEL, useMeetingActivity } from '@/lib/meetings';
 import { getSocket } from '@/lib/socket';
+import { BreakoutsPanel, PollsPanel, QnaPanel } from './meeting-extras';
 import type { JoinChoices } from './pre-join';
+
+// tldraw is large and browser-only: load it when someone opens the whiteboard.
+const Whiteboard = dynamic(() => import('./whiteboard'), { ssr: false, loading: () => <p className="p-4 text-sm text-white/60">Loading whiteboard…</p> });
 
 export type StageEnd = 'left' | 'ended' | 'removed' | 'disconnected';
 
@@ -30,20 +35,52 @@ const REACTIONS = ['👍', '❤️', '😂', '😮', '👏', '🎉'];
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-/** The in-meeting view: LiveKit room, gallery/speaker layouts, hands, reactions, chat, people and host controls. */
-export function MeetingStage({ meeting, join, choices, meId, onEnd }: {
+type Conn = Pick<MeetingRoomToken, 'url' | 'token' | 'breakoutRoomId' | 'breakoutName'>;
+
+/**
+ * The in-meeting view: LiveKit room, gallery/speaker layouts, hands, reactions, chat, people and host controls, plus
+ * breakout rooms (a separate LiveKit room per breakout), polls, Q&A, whiteboard and recording.
+ */
+export function MeetingStage({ meeting, join, choices, meId, guest = false, onEnd }: {
   meeting: MeetingInfo;
   join: { url: string; token: string; role: MeetingRole; state: MeetingLiveState };
   choices: JoinChoices;
   meId: string;
+  guest?: boolean;
   onEnd: (why: StageEnd) => void;
 }) {
   const [room, setRoom] = useState<Room | null>(null);
   const [connected, setConnected] = useState(false);
   const [state, setState] = useState<MeetingLiveState>(join.state);
   const [error, setError] = useState<string | null>(null);
+  const [conn, setConn] = useState<Conn>({ url: join.url, token: join.token, breakoutRoomId: null, breakoutName: null });
   const endRef = useRef(onEnd);
   endRef.current = onEnd;
+  const organizer = join.role === 'organizer' || join.role === 'coorganizer';
+
+  /** Connects to the room the server says I belong in (or, for organizers, the one they picked). */
+  const switchRoom = useCallback(async (roomId?: string) => {
+    try {
+      const t = await api<MeetingRoomToken>(`/meetings/sessions/${join.state.sessionId}/token${roomId ? `?room=${encodeURIComponent(roomId)}` : ''}`);
+      setConn((c) => (c.token === t.token ? c : t));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not switch rooms');
+    }
+  }, [join.state.sessionId]);
+  const switchRef = useRef(switchRoom);
+  switchRef.current = switchRoom;
+  const connRef = useRef(conn);
+  connRef.current = conn;
+
+  // Follow breakout assignments: attendees move when rooms open/close or they're reassigned; organizers come back
+  // to the main room when rooms close.
+  const myRoom = state.breakouts?.open ? (state.breakouts.rooms.find((r) => r.userIds.includes(meId))?.id ?? null) : null;
+  const roomsOpen = !!state.breakouts?.open;
+  useEffect(() => {
+    if (organizer) {
+      if (!roomsOpen && conn.breakoutRoomId) void switchRef.current('main');
+    } else if (myRoom !== conn.breakoutRoomId) void switchRef.current();
+  }, [organizer, myRoom, roomsOpen, conn.breakoutRoomId]);
 
   // One Room per effect run, so a dev-mode double mount can't abort and report the real connection.
   useEffect(() => {
@@ -60,11 +97,13 @@ export function MeetingStage({ meeting, join, choices, meId, onEnd }: {
     setRoom(r);
     r.on(RoomEvent.Disconnected, (reason) => {
       if (left || reason === DisconnectReason.CLIENT_INITIATED) return;
+      // A breakout room closing sends people back to the main meeting.
+      if (connRef.current.breakoutRoomId) return void switchRef.current(organizer ? 'main' : undefined);
       endRef.current(reason === DisconnectReason.PARTICIPANT_REMOVED ? 'removed' : reason === DisconnectReason.ROOM_DELETED ? 'ended' : 'disconnected');
     });
     (async () => {
       try {
-        await r.connect(join.url, join.token);
+        await r.connect(conn.url, conn.token);
       } catch {
         if (!left) setError("Couldn't reach the meeting server.");
         return;
@@ -78,7 +117,7 @@ export function MeetingStage({ meeting, join, choices, meId, onEnd }: {
       left = true;
       void r.disconnect();
     };
-  }, [join.url, join.token, choices]);
+  }, [conn.url, conn.token, choices, organizer]);
 
   // Live state (lobby, hands, lock, roster) pushed by the API.
   useEffect(() => {
@@ -88,27 +127,36 @@ export function MeetingStage({ meeting, join, choices, meId, onEnd }: {
       setState(s);
       if (s.endedAt) endRef.current('ended');
     };
+    // A reconnecting socket may have missed updates (e.g. breakout rooms opening).
+    const onConnect = () => void api<MeetingLiveState>(`/meetings/sessions/${join.state.sessionId}`).then(setState).catch(() => undefined);
     socket.on(WS_EVENTS.meetingUpdated, onUpdate);
-    return () => void socket.off(WS_EVENTS.meetingUpdated, onUpdate);
+    socket.on('connect', onConnect);
+    return () => {
+      socket.off(WS_EVENTS.meetingUpdated, onUpdate);
+      socket.off('connect', onConnect);
+    };
   }, [join.state.sessionId]);
 
   if (!room) return null;
   return (
     <RoomContext.Provider value={room}>
       <RoomAudioRenderer muted={choices.audioOff} />
-      <StageBody meeting={meeting} role={join.role} state={state} setState={setState} meId={meId} connected={connected} error={error} setError={setError} onEnd={onEnd} room={room} />
+      <StageBody meeting={meeting} role={join.role} state={state} setState={setState} meId={meId} guest={guest} conn={conn} onVisit={(id) => void switchRoom(id)} connected={connected} error={error} setError={setError} onEnd={onEnd} room={room} />
     </RoomContext.Provider>
   );
 }
 
-type Panel = 'none' | 'chat' | 'people';
+type Panel = 'none' | 'chat' | 'people' | 'polls' | 'qna' | 'breakouts';
 
-function StageBody({ meeting, role, state, setState, meId, connected, error, setError, onEnd, room }: {
+function StageBody({ meeting, role, state, setState, meId, guest, conn, onVisit, connected, error, setError, onEnd, room }: {
   meeting: MeetingInfo;
   role: MeetingRole;
   state: MeetingLiveState;
   setState: (s: MeetingLiveState) => void;
   meId: string;
+  guest: boolean;
+  conn: Conn;
+  onVisit: (roomId: string) => void;
   connected: boolean;
   error: string | null;
   setError: (e: string | null) => void;
@@ -128,6 +176,30 @@ function StageBody({ meeting, role, state, setState, meId, connected, error, set
   const handUp = state.hands.some((h) => h.userId === meId);
   const lp = room.localParticipant;
   const duration = useDuration();
+  const runsMeeting = elevated;
+  const [board, setBoard] = useState(false);
+  const [broadcast, setBroadcast] = useState<MeetingBroadcastEvent | null>(null);
+  const [pollAlert, setPollAlert] = useState(false);
+  const togglePanel = (p: Panel) => setPanel((cur) => (cur === p ? 'none' : p));
+  const organizerIds = useMemo(() => new Set(state.participants.filter((p) => p.role === 'organizer' || p.role === 'coorganizer').map((p) => p.id)), [state.participants]);
+
+  // A newly launched poll pops the polls panel open (or flags it if another panel is in use).
+  useMeetingActivity(meeting.id, () => setPanel((cur) => {
+    if (cur === 'none') return 'polls';
+    if (cur !== 'polls') setPollAlert(true);
+    return cur;
+  }));
+  useEffect(() => {
+    if (panel === 'polls') setPollAlert(false);
+  }, [panel]);
+
+  // Organizer messages to the breakout rooms.
+  useEffect(() => {
+    const socket = getSocket();
+    const on = (e: MeetingBroadcastEvent) => e.sessionId === state.sessionId && setBroadcast(e);
+    socket.on(WS_EVENTS.meetingBroadcast, on);
+    return () => void socket.off(WS_EVENTS.meetingBroadcast, on);
+  }, [state.sessionId]);
 
   useEffect(() => {
     const rerender = () => force((n) => n + 1);
@@ -184,7 +256,16 @@ function StageBody({ meeting, role, state, setState, meId, connected, error, set
           <span className="block truncate font-semibold">{meeting.title}</span>
           <span className="text-xs text-white/60">{connected ? duration : 'Connecting…'}{state.locked && ' · Locked'}</span>
         </span>
-        <ToolbarButton label="Chat" active={panel === 'chat'} onClick={() => setPanel((p) => (p === 'chat' ? 'none' : 'chat'))}><MessageSquare size={18} /></ToolbarButton>
+        {!guest && <ToolbarButton label="Chat" active={panel === 'chat'} onClick={() => togglePanel('chat')}><MessageSquare size={18} /></ToolbarButton>}
+        <ToolbarButton label="Polls" active={panel === 'polls'} badge={pollAlert ? 1 : 0} onClick={() => togglePanel('polls')}><BarChart3 size={18} /></ToolbarButton>
+        {meeting.options.allowQna && <ToolbarButton label="Q&A" active={panel === 'qna'} onClick={() => togglePanel('qna')}><MessageCircleQuestion size={18} /></ToolbarButton>}
+        {meeting.options.allowWhiteboard && <ToolbarButton label={board ? 'Close whiteboard' : 'Whiteboard'} active={board} onClick={() => setBoard((v) => !v)}><PenLine size={18} /></ToolbarButton>}
+        {organizer && <ToolbarButton label="Breakout rooms" active={panel === 'breakouts'} onClick={() => togglePanel('breakouts')}><DoorOpen size={18} /></ToolbarButton>}
+        {runsMeeting && (
+          <ToolbarButton label={state.recording ? 'Stop recording' : 'Start recording'} active={!!state.recording} onClick={() => void call('recording', { recording: !state.recording })}>
+            <Circle size={18} className={state.recording ? 'fill-red-500 text-red-500' : ''} />
+          </ToolbarButton>
+        )}
         <ToolbarButton label={`People (${state.participants.length})`} active={panel === 'people'} onClick={() => setPanel((p) => (p === 'people' ? 'none' : 'people'))} badge={organizer ? state.lobby.length : 0}>
           <Users size={18} />
         </ToolbarButton>
@@ -223,6 +304,25 @@ function StageBody({ meeting, role, state, setState, meId, connected, error, set
           <button onClick={() => void leave(true)} className="rounded-md border border-danger px-3 py-2 text-sm font-semibold text-red-300 hover:bg-danger/20">End</button>
         )}
       </header>
+      {state.recording && (
+        <div role="status" className="mx-4 mb-2 flex items-center gap-2 rounded-md bg-[#24243a] px-3 py-1.5 text-sm">
+          <Circle size={10} className="fill-red-500 text-red-500" aria-hidden />
+          <span>Recording started by {state.recording.startedBy}. By staying in the meeting you agree to being recorded.</span>
+        </div>
+      )}
+      {conn.breakoutRoomId && (
+        <div role="status" className="mx-4 mb-2 flex items-center gap-2 rounded-md bg-brand/30 px-3 py-1.5 text-sm">
+          <DoorOpen size={14} aria-hidden />
+          <span className="flex-1">You are in breakout room <strong>{conn.breakoutName}</strong>{state.breakouts?.endsAt && ` · closes at ${new Date(state.breakouts.endsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}</span>
+          {organizer && <button onClick={() => onVisit('main')} className="rounded px-2 py-0.5 hover:bg-white/10">Back to main meeting</button>}
+        </div>
+      )}
+      {broadcast && (
+        <div role="alert" className="mx-4 mb-2 flex items-center gap-2 rounded-md bg-yellow-400 px-3 py-1.5 text-sm text-black">
+          <span className="flex-1"><strong>{broadcast.from}:</strong> {broadcast.text}</span>
+          <button onClick={() => setBroadcast(null)} aria-label="Dismiss message"><X size={14} /></button>
+        </div>
+      )}
       {error && (
         <div role="alert" className="mx-4 mb-2 flex items-center gap-2 rounded-md bg-danger px-3 py-1.5 text-sm">
           <span className="flex-1">{error}</span>
@@ -238,7 +338,7 @@ function StageBody({ meeting, role, state, setState, meId, connected, error, set
       )}
       <div className="flex min-h-0 flex-1">
         <div className="relative min-w-0 flex-1">
-          <Stage layout={layout} state={state} meId={meId} />
+          {board ? <div className="h-full p-2"><Whiteboard meetingId={meeting.id} /></div> : <Stage layout={layout} state={state} meId={meId} />}
           <div aria-live="polite" className="pointer-events-none absolute bottom-4 left-0 h-48 w-full overflow-hidden">
             {floating.map((r) => (
               <span key={r.id} className="absolute bottom-0 flex animate-[float_3s_ease-out_forwards] flex-col items-center" style={{ left: `${r.x}%` }}>
@@ -250,6 +350,15 @@ function StageBody({ meeting, role, state, setState, meId, connected, error, set
         </div>
         {panel === 'chat' && <ChatPanel meeting={meeting} meId={meId} onClose={() => setPanel('none')} />}
         {panel === 'people' && <PeoplePanel state={state} meId={meId} organizer={organizer} call={call} onClose={() => setPanel('none')} />}
+        {panel === 'polls' && <SidePanel title="Polls" onClose={() => setPanel('none')}><div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3"><PollsPanel meetingId={meeting.id} manage={runsMeeting} /></div></SidePanel>}
+        {panel === 'qna' && <SidePanel title="Q&A" onClose={() => setPanel('none')}><div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3"><QnaPanel meetingId={meeting.id} moderator={runsMeeting} moderated={meeting.options.moderateQna} /></div></SidePanel>}
+        {panel === 'breakouts' && organizer && (
+          <SidePanel title="Breakout rooms" onClose={() => setPanel('none')}>
+            <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+              <BreakoutsPanel state={state} meId={meId} organizerIds={organizerIds} onState={setState} onVisit={onVisit} currentRoomId={conn.breakoutRoomId} />
+            </div>
+          </SidePanel>
+        )}
       </div>
     </div>
   );

@@ -76,6 +76,11 @@ function OptionsForm({ meeting }: { meeting: MeetingInfo }) {
         <Check label="Allow camera for attendees" checked={options.allowAttendeeCamera} onChange={(v) => set('allowAttendeeCamera', v)} />
         <Check label="Allow meeting chat" checked={options.allowChat} onChange={(v) => set('allowChat', v)} />
         <Check label="Allow reactions" checked={options.allowReactions} onChange={(v) => set('allowReactions', v)} />
+        <Check label="Record automatically" checked={options.autoRecord} onChange={(v) => set('autoRecord', v)} />
+        <Check label="Let anonymous guests join with the guest link (they always wait in the lobby)" checked={options.allowGuests} onChange={(v) => set('allowGuests', v)} />
+        <Check label="Allow Q&A" checked={options.allowQna} onChange={(v) => set('allowQna', v)} />
+        <Check label="Moderate Q&A (questions appear after an organizer publishes them)" checked={options.moderateQna} onChange={(v) => set('moderateQna', v)} />
+        <Check label="Allow whiteboard" checked={options.allowWhiteboard} onChange={(v) => set('allowWhiteboard', v)} />
 
         <h2 className="mt-6 mb-2 font-semibold">Roles</h2>
         <ul className="mb-5 space-y-2">

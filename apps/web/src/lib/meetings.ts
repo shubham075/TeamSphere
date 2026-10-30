@@ -1,9 +1,12 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useRef } from 'react';
 import type {
-  AttendanceReport, FreeBusyInfo, MeetingInfo, MeetingOccurrence, Recurrence, WorkingHours,
+  AttendanceReport, FreeBusyInfo, MeetingActivityEvent, MeetingInfo, MeetingOccurrence, MeetingPollInfo, MeetingQuestionInfo,
+  RecordingInfo, Recurrence, WorkingHours,
 } from '@teamsphere/shared';
-import { MEETING_JOIN_EARLY_MINUTES } from '@teamsphere/shared';
+import { MEETING_JOIN_EARLY_MINUTES, WS_EVENTS } from '@teamsphere/shared';
 import { api } from './api';
+import { getSocket } from './socket';
 
 export const mk = {
   all: ['meetings'] as const,
@@ -127,3 +130,46 @@ export function countdown(startAt: string, now = Date.now()): string | null {
 
 export const RSVP_LABEL = { none: 'No response', accepted: 'Accepted', tentative: 'Tentative', declined: 'Declined' } as const;
 export const ROLE_LABEL = { organizer: 'Organizer', coorganizer: 'Co-organizer', presenter: 'Presenter', attendee: 'Attendee' } as const;
+
+// ---------------------------------------------------------------- Phase 5b: recordings, polls, Q&A
+
+export const mk5 = {
+  recordings: (id: string) => ['meetings', 'recordings', id] as const,
+  polls: (id: string) => ['meetings', 'polls', id] as const,
+  questions: (id: string) => ['meetings', 'questions', id] as const,
+};
+
+export function useRecordings(id: string, enabled = true) {
+  return useQuery({ queryKey: mk5.recordings(id), queryFn: () => api<RecordingInfo[]>(`/meetings/${id}/recordings`), enabled });
+}
+
+export function useMeetingPolls(id: string) {
+  return useQuery({ queryKey: mk5.polls(id), queryFn: () => api<MeetingPollInfo[]>(`/meetings/${id}/polls`) });
+}
+
+export function useMeetingQuestions(id: string, enabled = true) {
+  return useQuery({ queryKey: mk5.questions(id), queryFn: () => api<MeetingQuestionInfo[]>(`/meetings/${id}/questions`), enabled });
+}
+
+/** Keeps a meeting's polls / Q&A / recordings fresh; `onLaunch` fires when an organizer launches a poll. */
+export function useMeetingActivity(meetingId: string, onLaunch?: (pollId: string) => void) {
+  const qc = useQueryClient();
+  const launch = useRef(onLaunch);
+  launch.current = onLaunch;
+  useEffect(() => {
+    const socket = getSocket();
+    const on = (e: MeetingActivityEvent) => {
+      if (e.meetingId !== meetingId) return;
+      const key = e.kind === 'polls' ? mk5.polls(meetingId) : e.kind === 'questions' ? mk5.questions(meetingId) : mk5.recordings(meetingId);
+      void qc.invalidateQueries({ queryKey: key });
+      if (e.launchedPollId) launch.current?.(e.launchedPollId);
+    };
+    socket.on(WS_EVENTS.meetingActivity, on);
+    return () => void socket.off(WS_EVENTS.meetingActivity, on);
+  }, [meetingId, qc]);
+}
+
+export function fmtBytes(n: number | null) {
+  if (n === null) return '';
+  return n > 1e9 ? `${(n / 1e9).toFixed(1)} GB` : n > 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.ceil(n / 1e3)} KB`;
+}

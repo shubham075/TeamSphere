@@ -17,7 +17,9 @@ import { useAuth } from '@/lib/auth-store';
 import { formatCallDuration } from '@/lib/calls';
 import {
   canJoinNow, countdown, fmtRange, fmtTime, mk, recurrenceLabel, ROLE_LABEL, RSVP_LABEL, toLocalInput, useAttendance, useMeeting,
+  useMeetingActivity,
 } from '@/lib/meetings';
+import { PollsPanel, RecordingsList } from './meeting-extras';
 import { MeetingForm } from './meeting-form';
 
 /** Side panel for one meeting occurrence: details, RSVP, join, and organizer actions. */
@@ -39,6 +41,7 @@ export function MeetingDetails({ occurrence, meetingId, onClose }: { occurrence:
 }
 
 function DetailsBody({ meeting, occurrence, onClose }: { meeting: MeetingInfo; occurrence: MeetingOccurrence | null; onClose: () => void }) {
+  useMeetingActivity(meeting.id);
   const qc = useQueryClient();
   const router = useRouter();
   const [editing, setEditing] = useState<'series' | 'occurrence' | null>(null);
@@ -92,6 +95,15 @@ function DetailsBody({ meeting, occurrence, onClose }: { meeting: MeetingInfo; o
           >
             <Copy size={14} />
           </button>
+          {meeting.options.allowGuests && isOrganizer && (
+            <button
+              onClick={() => void navigator.clipboard?.writeText(`${location.origin}/join/${meeting.joinCode}`)}
+              title="Copy guest link (name only, guests wait in the lobby)"
+              className="rounded px-1.5 py-0.5 text-xs text-brand hover:bg-surface-hover"
+            >
+              Copy guest link
+            </button>
+          )}
         </p>
       </div>
 
@@ -153,6 +165,8 @@ function DetailsBody({ meeting, occurrence, onClose }: { meeting: MeetingInfo; o
       </ul>
 
       {isOrganizer && <Attendance meetingId={meeting.id} />}
+      {meeting.myRole && <Collapsible title="Recordings"><RecordingsList meetingId={meeting.id} /></Collapsible>}
+      {isOrganizer && !meeting.cancelledAt && <Collapsible title="Polls"><PollsPanel meetingId={meeting.id} manage /></Collapsible>}
 
       {editing && (
         <MeetingForm
@@ -238,6 +252,18 @@ function Rsvp({ meeting, occurrence, busy, run }: { meeting: MeetingInfo; occurr
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function Collapsible({ title, children }: { title: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mb-2">
+      <button onClick={() => setOpen((v) => !v)} aria-expanded={open} className="mb-2 flex items-center gap-1 font-semibold">
+        {open ? <ChevronDown size={16} /> : <ChevronRight size={16} />} {title}
+      </button>
+      {open && children}
     </div>
   );
 }
