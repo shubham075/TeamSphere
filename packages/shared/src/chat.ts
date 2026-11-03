@@ -215,11 +215,13 @@ export interface MessagePage {
 
 export interface ActivityItem {
   id: string;
-  type: 'mention' | 'reply' | 'reaction' | 'missed_call' | 'voicemail' | 'meeting_invite' | 'meeting_updated' | 'meeting_cancelled' | 'meeting_rsvp' | import('./files').FileActivityType;
+  type: 'mention' | 'reply' | 'reaction' | 'missed_call' | 'voicemail' | 'meeting_invite' | 'meeting_updated' | 'meeting_cancelled' | 'meeting_rsvp' | import('./files').FileActivityType | import('./planner').PlannerActivityType;
   actor: { id: string; displayName: string; avatarUrl: string | null } | null;
   conversationId: string | null;
   conversationTitle: string | null;
   messageId: string | null;
+  /** Non-chat target, e.g. the task of a task_assigned entry. */
+  targetId?: string | null;
   preview: string | null;
   read: boolean;
   createdAt: string;

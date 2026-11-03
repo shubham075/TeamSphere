@@ -17,6 +17,7 @@ import { FilesModule } from './files/files.module';
 import { MeetingsModule } from './meetings/meetings.module';
 import { AdminModule } from './admin/admin.module';
 import { SearchModule } from './search/search.module';
+import { PlannerModule } from './planner/planner.module';
 import { AccessTokenGuard, RolesGuard } from './common/guards';
 import { Public } from './common/auth.decorators';
 
@@ -51,6 +52,7 @@ class HealthController {
     MeetingsModule,
     AdminModule,
     SearchModule,
+    PlannerModule,
   ],
   controllers: [HealthController],
   providers: [

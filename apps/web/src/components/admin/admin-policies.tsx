@@ -27,6 +27,7 @@ const FIELDS: Record<PolicyType, { key: string; label: string; hint?: string }[]
     { key: 'files', label: 'Files app (uploads)' },
     { key: 'meetings', label: 'Calendar (schedule meetings)' },
     { key: 'calls', label: 'Calls app' },
+    { key: 'planner', label: 'Planner (plans and tasks)' },
   ],
 };
 

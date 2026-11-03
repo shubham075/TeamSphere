@@ -352,6 +352,8 @@ model Notification {
   conversationId String?
   conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   messageId      String?
+  /// Non-chat target of the entry, e.g. a task id for task_assigned / task_comment.
+  targetId       String?
   message        Message?      @relation(fields: [messageId], references: [id], onDelete: Cascade)
   preview        String?
   readAt         DateTime?
@@ -447,6 +449,7 @@ model Channel {
   members ChannelMember[]
   shares  ChannelShare[]
   posts   ChannelPost[]
+  tabs    ChannelTab[]
 
   @@index([teamId])
 }
@@ -1040,4 +1043,178 @@ model PolicyAssignment {
   @@unique([policyId, teamId])
   @@index([userId])
   @@index([teamId])
+}
+
+// ---------------------------------------------------------------- Phase 8a: Planner & To Do, channel app tabs
+
+/// An app pinned as a channel tab after Posts / Files / Notes. `refId` points into the app (e.g. a Plan id).
+model ChannelTab {
+  id          String   @id @default(cuid())
+  channelId   String
+  channel     Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  app         String
+  refId       String
+  title       String
+  position    Float    @default(0)
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  @@unique([channelId, app, refId])
+  @@index([channelId])
+}
+
+enum PlanOwnerType {
+  user
+  channel
+}
+
+enum TaskPriority {
+  urgent
+  important
+  medium
+  low
+}
+
+enum TaskProgress {
+  not_started
+  in_progress
+  completed
+}
+
+/// A plan belongs to a person (shared with PlanMember rows) or to a channel (everyone who can open the channel).
+/// User ids are plain columns, like Files, so User stays untouched.
+model Plan {
+  id          String        @id @default(cuid())
+  ownerType   PlanOwnerType
+  ownerId     String
+  title       String
+  /// Label color → name, e.g. {"red":"Blocked"}. Colors are the fixed set in shared TASK_LABEL_COLORS.
+  labels      Json          @default("{}")
+  createdById String
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  members PlanMember[]
+  buckets PlanBucket[]
+  tasks   Task[]
+
+  @@index([ownerType, ownerId])
+}
+
+model PlanMember {
+  planId  String
+  plan    Plan     @relation(fields: [planId], references: [id], onDelete: Cascade)
+  userId  String
+  addedAt DateTime @default(now())
+
+  @@id([planId, userId])
+  @@index([userId])
+}
+
+model PlanBucket {
+  id       String @id @default(cuid())
+  planId   String
+  plan     Plan   @relation(fields: [planId], references: [id], onDelete: Cascade)
+  name     String
+  /// Fractional ordering: moving a bucket writes one row (midpoint of its new neighbours).
+  position Float
+
+  tasks Task[]
+
+  @@index([planId])
+}
+
+/// A plan task, or a personal To Do task when `planId` is null (then only `ownerId` sees it).
+model Task {
+  id                   String       @id @default(cuid())
+  planId               String?
+  plan                 Plan?        @relation(fields: [planId], references: [id], onDelete: Cascade)
+  bucketId             String?
+  bucket               PlanBucket?  @relation(fields: [bucketId], references: [id], onDelete: SetNull)
+  ownerId              String?
+  title                String
+  notes                String       @default("")
+  priority             TaskPriority @default(medium)
+  progress             TaskProgress @default(not_started)
+  startDate            DateTime?
+  dueDate              DateTime?
+  labels               String[]     @default([])
+  /// Starred in To Do ("Important" list). Personal tasks only; plan tasks use priority.
+  important            Boolean      @default(false)
+  position             Float        @default(0)
+  completedAt          DateTime?
+  completedById        String?
+  /// "Create task" from a chat message or channel post.
+  sourceConversationId String?
+  sourceMessageId      String?
+  createdById          String
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  assignees   TaskAssignee[]
+  myDay       TaskMyDay[]
+  checklist   TaskChecklistItem[]
+  comments    TaskComment[]
+  attachments TaskAttachment[]
+
+  @@index([planId])
+  @@index([bucketId])
+  @@index([ownerId])
+}
+
+model TaskAssignee {
+  taskId     String
+  task       Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId     String
+  assignedAt DateTime @default(now())
+
+  @@id([taskId, userId])
+  @@index([userId])
+}
+
+/// "Add to My Day": per person and calendar day (YYYY-MM-DD in their zone), so the list empties itself overnight.
+model TaskMyDay {
+  taskId String
+  task   Task   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId String
+  day    String
+
+  @@id([taskId, userId])
+  @@index([userId, day])
+}
+
+model TaskChecklistItem {
+  id       String  @id @default(cuid())
+  taskId   String
+  task     Task    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  text     String
+  done     Boolean @default(false)
+  position Float
+
+  @@index([taskId])
+}
+
+model TaskComment {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  authorId  String
+  body      String
+  createdAt DateTime @default(now())
+
+  @@index([taskId, createdAt])
+}
+
+model TaskAttachment {
+  id           String   @id @default(cuid())
+  taskId       String
+  task         Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  storageKey   String
+  fileName     String
+  mimeType     String
+  size         Int
+  uploadedById String
+  createdAt    DateTime @default(now())
+
+  @@index([taskId])
 }

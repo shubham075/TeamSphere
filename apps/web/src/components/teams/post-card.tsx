@@ -1,7 +1,7 @@
 'use client';
 
 import clsx from 'clsx';
-import { CornerDownRight, FileText, Megaphone, MoreHorizontal, Pencil, Share2, SmilePlus, Trash2 } from 'lucide-react';
+import { CheckSquare, CornerDownRight, FileText, Megaphone, MoreHorizontal, Pencil, Share2, SmilePlus, Trash2 } from 'lucide-react';
 import { memo, useRef, useState } from 'react';
 import { ChannelInfo, ChannelPost, MessageInfo, QUICK_REACTIONS, TeamInfo } from '@teamsphere/shared';
 import { Avatar } from '@/components/avatar';
@@ -10,6 +10,7 @@ import { RichText } from '@/components/chat/rich-text';
 import { formatBytes, useEditMessage, useToggleReaction } from '@/lib/chat';
 import { useModeratorDelete } from '@/lib/teams';
 import { useDismiss } from '@/lib/use-dismiss';
+import { CreateTaskFromMessageDialog } from '@/components/planner/dialogs';
 import { ChannelComposer, decodeMentions, encodeMentions } from './channel-composer';
 
 const when = (iso: string) => {
@@ -25,6 +26,7 @@ function ChannelMessage({ m, channel, meId, compact }: { m: MessageInfo; channel
   const edit = useEditMessage();
   const del = useModeratorDelete(channel.id);
   const [menu, setMenu] = useState<'none' | 'more' | 'emoji'>('none');
+  const [taskFrom, setTaskFrom] = useState(false);
   const [editing, setEditing] = useState<{ text: string; mentions: ReturnType<typeof decodeMentions>['mentions'] } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   useDismiss(menuRef, menu !== 'none', () => setMenu('none'));
@@ -127,11 +129,9 @@ function ChannelMessage({ m, channel, meId, compact }: { m: MessageInfo; channel
           <button onClick={() => setMenu(menu === 'emoji' ? 'none' : 'emoji')} aria-label="More reactions" className="rounded p-1.5 hover:bg-surface-hover">
             <SmilePlus size={15} />
           </button>
-          {(mine || channel.permissions.moderate) && (
-            <button onClick={() => setMenu(menu === 'more' ? 'none' : 'more')} aria-label="More options" className="rounded p-1.5 hover:bg-surface-hover">
-              <MoreHorizontal size={15} />
-            </button>
-          )}
+          <button onClick={() => setMenu(menu === 'more' ? 'none' : 'more')} aria-label="More options" className="rounded p-1.5 hover:bg-surface-hover">
+            <MoreHorizontal size={15} />
+          </button>
           {menu === 'emoji' && (
             <div className="absolute top-9 right-0 z-20">
               <EmojiGrid onPick={toggle} />
@@ -152,17 +152,29 @@ function ChannelMessage({ m, channel, meId, compact }: { m: MessageInfo; channel
               )}
               <button
                 onClick={() => {
-                  if (confirm(mine ? 'Delete this message?' : 'Delete this message for everyone? This is logged.')) del.mutate(m.id);
+                  setTaskFrom(true);
                   setMenu('none');
                 }}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-danger hover:bg-surface-hover"
+                className="flex w-full items-center gap-2 px-3 py-1.5 hover:bg-surface-hover"
               >
-                <Trash2 size={14} /> Delete
+                <CheckSquare size={14} /> Create task
               </button>
+              {(mine || channel.permissions.moderate) && (
+                <button
+                  onClick={() => {
+                    if (confirm(mine ? 'Delete this message?' : 'Delete this message for everyone? This is logged.')) del.mutate(m.id);
+                    setMenu('none');
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-danger hover:bg-surface-hover"
+                >
+                  <Trash2 size={14} /> Delete
+                </button>
+              )}
             </div>
           )}
         </div>
       )}
+      {taskFrom && <CreateTaskFromMessageDialog message={m} onClose={() => setTaskFrom(false)} />}
     </div>
   );
 }

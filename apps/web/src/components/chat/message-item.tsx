@@ -2,7 +2,7 @@
 
 import clsx from 'clsx';
 import {
-  AlertCircle, Bookmark, BookmarkCheck, Copy, CornerUpLeft, EyeOff, FileText, Loader2, MoreHorizontal, Pencil,
+  AlertCircle, Bookmark, BookmarkCheck, CheckSquare, Copy, CornerUpLeft, EyeOff, FileText, Loader2, MoreHorizontal, Pencil,
   SmilePlus, Trash2,
 } from 'lucide-react';
 import { memo, useRef, useState } from 'react';
@@ -10,6 +10,7 @@ import { LinkPreview, MessageInfo, QUICK_REACTIONS, toPlainText } from '@teamsph
 import { Avatar } from '@/components/avatar';
 import { formatBytes, useDeleteMessage, useMarkUnread, useSetSaved, useToggleReaction } from '@/lib/chat';
 import { useDismiss } from '@/lib/use-dismiss';
+import { CreateTaskFromMessageDialog } from '@/components/planner/dialogs';
 import { EmojiGrid } from './emoji-grid';
 import { PollCard } from './poll-card';
 import { RichText } from './rich-text';
@@ -63,6 +64,7 @@ function MessageItemImpl({ message: m, meId, showHeader, seenLabel, highlighted,
   const setSaved = useSetSaved();
   const markUnread = useMarkUnread();
   const [menu, setMenu] = useState<'none' | 'more' | 'emoji'>('none');
+  const [taskFrom, setTaskFrom] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   useDismiss(menuRef, menu !== 'none', () => setMenu('none'));
 
@@ -257,6 +259,15 @@ function MessageItemImpl({ message: m, meId, showHeader, seenLabel, highlighted,
               >
                 {saved ? <BookmarkCheck size={14} /> : <Bookmark size={14} />} {saved ? 'Unsave' : 'Save this message'}
               </button>
+              <button
+                onClick={() => {
+                  setTaskFrom(true);
+                  setMenu('none');
+                }}
+                className="flex w-full items-center gap-2 px-3 py-1.5 hover:bg-surface-hover"
+              >
+                <CheckSquare size={14} /> Create task
+              </button>
               {!mine && (
                 <button
                   onClick={() => {
@@ -295,6 +306,7 @@ function MessageItemImpl({ message: m, meId, showHeader, seenLabel, highlighted,
           )}
         </div>
       )}
+      {taskFrom && <CreateTaskFromMessageDialog message={m} onClose={() => setTaskFrom(false)} />}
     </div>
   );
 }

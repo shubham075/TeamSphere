@@ -2,7 +2,7 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { Archive, Bell, BellOff, FileText, Loader2, Pencil, Settings } from 'lucide-react';
+import { Archive, Bell, BellOff, FileText, LayoutGrid, Loader2, Pencil, Plus, Settings, X } from 'lucide-react';
 import { Fragment, ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { AttachmentInfo, ChannelInfo, ChannelNotes, TeamInfo } from '@teamsphere/shared';
 import { RichText } from '@/components/chat/rich-text';
@@ -17,13 +17,21 @@ import { PostCard } from './post-card';
 import { setActiveChannel } from './teams-realtime';
 import { ChannelIcon, primaryButton, secondaryButton } from './ui';
 import { MeetNowButton } from '@/components/meetings/meet-now-button';
+import { AddTabDialog } from '@/components/planner/add-tab-dialog';
+import { PlanView } from '@/components/planner/plan-view';
+import { plannerApi, usePlannerMutation, useChannelTabs } from '@/lib/planner';
 
-type Tab = 'posts' | 'files' | 'notes';
+/** Built-in tabs, or `tab:<ChannelTab id>` for an app tab (Planner…). */
+type Tab = 'posts' | 'files' | 'notes' | `tab:${string}`;
 
 export function ChannelView({ team, channel, meId }: { team: TeamInfo; channel: ChannelInfo; meId: string }) {
   const qc = useQueryClient();
   const [tab, setTab] = useState<Tab>('posts');
   const [settings, setSettings] = useState(false);
+  const [addTab, setAddTab] = useState(false);
+  const { data: appTabs } = useChannelTabs(channel.id);
+  const removeTab = usePlannerMutation((tabId: string) => plannerApi.removeTab(channel.id, tabId));
+  const activeAppTab = appTabs?.find((t) => tab === `tab:${t.id}`);
   const prefs = useChannelSettings(channel.id);
   const readOnly = !!channel.archivedAt || !!team.archivedAt;
 
@@ -68,7 +76,7 @@ export function ChannelView({ team, channel, meId }: { team: TeamInfo; channel: 
           </button>
         </div>
         {channel.description && <p className="mt-0.5 truncate text-xs text-muted">{channel.description}</p>}
-        <div role="tablist" aria-label="Channel tabs" className="mt-2 flex gap-4">
+        <div role="tablist" aria-label="Channel tabs" className="mt-2 flex items-end gap-4 overflow-x-auto">
           {(['posts', 'files', 'notes'] as const).map((t) => (
             <button
               key={t}
@@ -80,12 +88,45 @@ export function ChannelView({ team, channel, meId }: { team: TeamInfo; channel: 
               {t}
             </button>
           ))}
+          {appTabs?.map((t) => (
+            <span key={t.id} className="group flex items-center">
+              <button
+                role="tab"
+                aria-selected={tab === `tab:${t.id}`}
+                onClick={() => setTab(`tab:${t.id}`)}
+                className={clsx('flex items-center gap-1.5 border-b-2 pb-2 text-sm whitespace-nowrap', tab === `tab:${t.id}` ? 'border-brand font-semibold text-text' : 'border-transparent text-muted hover:text-text')}
+              >
+                <LayoutGrid size={14} aria-hidden /> {t.title}
+              </button>
+              {!readOnly && (
+                <button
+                  onClick={() => {
+                    if (!confirm(`Remove the “${t.title}” tab? The plan itself is kept.`)) return;
+                    removeTab.mutate(t.id);
+                    if (tab === `tab:${t.id}`) setTab('posts');
+                  }}
+                  aria-label={`Remove ${t.title} tab`}
+                  className="mb-2 ml-0.5 rounded p-0.5 text-muted opacity-0 group-hover:opacity-100 focus:opacity-100 hover:bg-surface-hover"
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </span>
+          ))}
+          {!readOnly && (
+            <button onClick={() => setAddTab(true)} aria-label="Add a tab" title="Add a tab" className="mb-1.5 rounded p-1 text-muted hover:bg-surface-hover">
+              <Plus size={16} />
+            </button>
+          )}
         </div>
       </header>
 
       {tab === 'posts' && <PostsTab team={team} channel={channel} meId={meId} />}
       {tab === 'files' && <FilesTab channel={channel} />}
       {tab === 'notes' && <NotesTab channel={channel} readOnly={readOnly} />}
+      {activeAppTab?.app === 'planner' && <PlanView key={activeAppTab.refId} planId={activeAppTab.refId} compact onDeleted={() => setTab('posts')} />}
+      {tab.startsWith('tab:') && appTabs && !activeAppTab && <p className="p-6 text-sm text-muted">This tab was removed.</p>}
+      {addTab && <AddTabDialog channelId={channel.id} existing={appTabs ?? []} onClose={() => setAddTab(false)} onAdded={(id) => (setAddTab(false), setTab(`tab:${id}`))} />}
       {settings && <ChannelSettingsDialog team={team} channel={channel} onClose={() => setSettings(false)} />}
     </div>
   );

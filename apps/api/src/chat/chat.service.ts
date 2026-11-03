@@ -616,6 +616,7 @@ export class ChatService {
     actor: { id: string; displayName: string; avatarKey: string | null } | null;
     conversation: { id: string; title: string | null; type: string } | null;
     messageId: string | null;
+    targetId?: string | null;
     preview: string | null;
     readAt: Date | null;
     createdAt: Date;
@@ -627,6 +628,7 @@ export class ChatService {
       conversationId: n.conversation?.id ?? null,
       conversationTitle: n.conversation?.title ?? (n.conversation?.type === 'direct' ? 'Chat' : null),
       messageId: n.messageId,
+      targetId: n.targetId ?? null,
       preview: n.preview,
       read: !!n.readAt,
       createdAt: n.createdAt.toISOString(),

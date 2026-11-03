@@ -2,7 +2,7 @@
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { AtSign, CalendarDays, CheckCheck, CornerUpLeft, FolderOpen, PhoneMissed, SmilePlus, UserPlus, Users, Voicemail } from 'lucide-react';
+import { AtSign, CalendarDays, CheckCheck, CheckSquare, CornerUpLeft, FolderOpen, PhoneMissed, SmilePlus, UserPlus, Users, Voicemail } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import type { ActivityItem } from '@teamsphere/shared';
@@ -27,6 +27,8 @@ const TYPE_INFO: Record<string, { icon: typeof AtSign; verb: string }> = {
   meeting_rsvp: { icon: CalendarDays, verb: 'responded to your meeting' },
   team_add: { icon: UserPlus, verb: 'added you to a team' },
   channel_mention: { icon: Users, verb: 'mentioned a group you’re in' },
+  task_assigned: { icon: CheckSquare, verb: 'assigned you a task' },
+  task_comment: { icon: CheckSquare, verb: 'commented on a task' },
 };
 
 export default function ActivityPage() {
@@ -73,6 +75,7 @@ export default function ActivityPage() {
                     else if (a.type.startsWith('file_')) router.push('/files?view=shared');
                     else if (a.type === 'missed_call') router.push('/calls');
                     else if (a.type.startsWith('meeting_')) router.push('/calendar');
+                    else if (a.type.startsWith('task_')) router.push(a.targetId ? `/tasks?list=assigned&task=${a.targetId}` : '/tasks?list=assigned');
                     // Conversations that aren't chats are team channels.
                     else if (a.conversationId) router.push(chats?.some((c) => c.id === a.conversationId) ? `/chat/${a.conversationId}` : `/teams?conversation=${a.conversationId}`);
                   }}

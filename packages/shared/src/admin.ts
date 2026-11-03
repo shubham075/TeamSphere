@@ -49,6 +49,7 @@ export const appsPolicySchema = z.object({
   files: z.boolean().default(true),
   meetings: z.boolean().default(true),
   calls: z.boolean().default(true),
+  planner: z.boolean().default(true),
 });
 
 export const POLICY_SCHEMAS = {

@@ -49,6 +49,7 @@ export function AppRail() {
   const hidden = new Set<string>([
     ...(policies && !policies.apps.files ? ['files'] : []),
     ...(policies && !policies.apps.meetings ? ['calendar'] : []),
+    ...(policies && !policies.apps.planner ? ['tasks'] : []),
     ...(policies && (!policies.apps.calls || !policies.calling.allowCalls) ? ['calls'] : []),
   ]);
   const badges: Record<string, number> = {
