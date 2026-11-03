@@ -1218,3 +1218,82 @@ model TaskAttachment {
 
   @@index([taskId])
 }
+
+// ---------------------------------------------------------------- Phase 8b: Pages, wiki, meeting notes, whiteboards
+
+enum PageOwnerType {
+  user
+  channel
+  meeting
+}
+
+/// A co-edited rich page (Tiptap + Yjs). Personal pages are shared through PageMember on the root page; channel pages
+/// form the channel's wiki; a meeting has one notes page. Subpages copy the root's owner so access is one lookup.
+model Page {
+  id          String        @id @default(cuid())
+  ownerType   PageOwnerType
+  ownerId     String
+  /// The top page of this tree (itself for a root page).
+  rootId      String
+  parentId    String?
+  parent      Page?         @relation("PageTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children    Page[]        @relation("PageTree")
+  title       String
+  icon        String?
+  position    Float         @default(0)
+  /// Y.encodeStateAsUpdate of the document; `text` is a plain-text copy for previews.
+  state       Bytes?
+  text        String        @default("")
+  createdById String
+  updatedById String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  members PageMember[]
+
+  @@index([ownerType, ownerId])
+  @@index([rootId])
+  @@index([parentId])
+}
+
+model PageMember {
+  pageId  String
+  page    Page     @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  userId  String
+  addedAt DateTime @default(now())
+
+  @@id([pageId, userId])
+  @@index([userId])
+}
+
+enum BoardOwnerType {
+  user
+  channel
+}
+
+/// A standalone whiteboard (tldraw records in a Yjs map), co-edited like the meeting whiteboard.
+model Board {
+  id          String         @id @default(cuid())
+  ownerType   BoardOwnerType
+  ownerId     String
+  title       String
+  state       Bytes?
+  createdById String
+  updatedById String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  members BoardMember[]
+
+  @@index([ownerType, ownerId])
+}
+
+model BoardMember {
+  boardId String
+  board   Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  userId  String
+  addedAt DateTime @default(now())
+
+  @@id([boardId, userId])
+  @@index([userId])
+}

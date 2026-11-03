@@ -13,5 +13,6 @@ import { WhiteboardService } from './whiteboard.service';
   imports: [AuthModule, CallsModule, ChatModule, TeamsModule],
   controllers: [MeetingsController],
   providers: [MeetingsService, RecordingsService, MeetingPollsService, WhiteboardService],
+  exports: [MeetingsService],
 })
 export class MeetingsModule {}

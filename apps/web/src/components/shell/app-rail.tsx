@@ -50,6 +50,8 @@ export function AppRail() {
     ...(policies && !policies.apps.files ? ['files'] : []),
     ...(policies && !policies.apps.meetings ? ['calendar'] : []),
     ...(policies && !policies.apps.planner ? ['tasks'] : []),
+    ...(policies && !policies.apps.pages ? ['pages'] : []),
+    ...(policies && !policies.apps.whiteboard ? ['whiteboard'] : []),
     ...(policies && (!policies.apps.calls || !policies.calling.allowCalls) ? ['calls'] : []),
   ]);
   const badges: Record<string, number> = {

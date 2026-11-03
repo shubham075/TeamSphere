@@ -1,5 +1,5 @@
 import {
-  Activity, Calendar, CheckSquare, FileText, Folder, LayoutGrid, MessageSquare, Phone, Users, type LucideIcon,
+  Activity, Calendar, CheckSquare, FileText, Folder, LayoutGrid, MessageSquare, PenTool, Phone, Users, type LucideIcon,
 } from 'lucide-react';
 
 export interface RailApp {
@@ -21,6 +21,7 @@ export const RAIL_APPS: RailApp[] = [
   { id: 'files', label: 'Files', icon: Folder, phase: 6, description: 'Your files and team document libraries.' },
   { id: 'tasks', label: 'Planner', icon: CheckSquare, phase: 8, description: 'Plans, boards and personal tasks.' },
   { id: 'pages', label: 'Pages', icon: FileText, phase: 8, description: 'Co-edited pages, notes and wikis.' },
+  { id: 'whiteboard', label: 'Whiteboard', icon: PenTool, phase: 8, description: 'Shared whiteboards for sketching ideas together.' },
 ];
 
 export const MORE_APPS: RailApp = {

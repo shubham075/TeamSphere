@@ -28,6 +28,8 @@ const FIELDS: Record<PolicyType, { key: string; label: string; hint?: string }[]
     { key: 'meetings', label: 'Calendar (schedule meetings)' },
     { key: 'calls', label: 'Calls app' },
     { key: 'planner', label: 'Planner (plans and tasks)' },
+    { key: 'pages', label: 'Pages (new pages and wikis)' },
+    { key: 'whiteboard', label: 'Whiteboard app (new boards)' },
   ],
 };
 

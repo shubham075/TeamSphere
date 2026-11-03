@@ -7,7 +7,7 @@ import {
 import clsx from 'clsx';
 import { DisconnectReason, Room, RoomEvent, Track, VideoPresets } from 'livekit-client';
 import {
-  BarChart3, Circle, DoorOpen, Hand, LayoutGrid, Lock, LockOpen, MessageCircleQuestion, MessageSquare, Mic, MicOff, MonitorUp,
+  BarChart3, Circle, DoorOpen, NotebookPen, Hand, LayoutGrid, Lock, LockOpen, MessageCircleQuestion, MessageSquare, Mic, MicOff, MonitorUp,
   MonitorX, PenLine, PhoneOff, Presentation, Send, Smile, UserMinus, Users, Video, VideoOff, X,
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
@@ -24,6 +24,7 @@ import { getDevicePrefs } from '@/lib/devices';
 import { ROLE_LABEL, useMeetingActivity } from '@/lib/meetings';
 import { getSocket } from '@/lib/socket';
 import { BreakoutsPanel, PollsPanel, QnaPanel } from './meeting-extras';
+import { MeetingNotes } from './meeting-notes';
 import type { JoinChoices } from './pre-join';
 
 // tldraw is large and browser-only: load it when someone opens the whiteboard.
@@ -146,7 +147,7 @@ export function MeetingStage({ meeting, join, choices, meId, guest = false, onEn
   );
 }
 
-type Panel = 'none' | 'chat' | 'people' | 'polls' | 'qna' | 'breakouts';
+type Panel = 'none' | 'chat' | 'people' | 'polls' | 'qna' | 'breakouts' | 'notes';
 
 function StageBody({ meeting, role, state, setState, meId, guest, conn, onVisit, connected, error, setError, onEnd, room }: {
   meeting: MeetingInfo;
@@ -257,6 +258,7 @@ function StageBody({ meeting, role, state, setState, meId, guest, conn, onVisit,
           <span className="text-xs text-white/60">{connected ? duration : 'Connecting…'}{state.locked && ' · Locked'}</span>
         </span>
         {!guest && <ToolbarButton label="Chat" active={panel === 'chat'} onClick={() => togglePanel('chat')}><MessageSquare size={18} /></ToolbarButton>}
+        {!guest && <ToolbarButton label="Notes" active={panel === 'notes'} onClick={() => togglePanel('notes')}><NotebookPen size={18} /></ToolbarButton>}
         <ToolbarButton label="Polls" active={panel === 'polls'} badge={pollAlert ? 1 : 0} onClick={() => togglePanel('polls')}><BarChart3 size={18} /></ToolbarButton>
         {meeting.options.allowQna && <ToolbarButton label="Q&A" active={panel === 'qna'} onClick={() => togglePanel('qna')}><MessageCircleQuestion size={18} /></ToolbarButton>}
         {meeting.options.allowWhiteboard && <ToolbarButton label={board ? 'Close whiteboard' : 'Whiteboard'} active={board} onClick={() => setBoard((v) => !v)}><PenLine size={18} /></ToolbarButton>}
@@ -350,6 +352,7 @@ function StageBody({ meeting, role, state, setState, meId, guest, conn, onVisit,
         </div>
         {panel === 'chat' && <ChatPanel meeting={meeting} meId={meId} onClose={() => setPanel('none')} />}
         {panel === 'people' && <PeoplePanel state={state} meId={meId} organizer={organizer} call={call} onClose={() => setPanel('none')} />}
+        {panel === 'notes' && !guest && <SidePanel title="Notes" onClose={() => setPanel('none')}><MeetingNotes meetingId={meeting.id} dark /></SidePanel>}
         {panel === 'polls' && <SidePanel title="Polls" onClose={() => setPanel('none')}><div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3"><PollsPanel meetingId={meeting.id} manage={runsMeeting} /></div></SidePanel>}
         {panel === 'qna' && <SidePanel title="Q&A" onClose={() => setPanel('none')}><div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3"><QnaPanel meetingId={meeting.id} moderator={runsMeeting} moderated={meeting.options.moderateQna} /></div></SidePanel>}
         {panel === 'breakouts' && organizer && (

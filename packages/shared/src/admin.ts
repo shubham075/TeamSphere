@@ -50,6 +50,8 @@ export const appsPolicySchema = z.object({
   meetings: z.boolean().default(true),
   calls: z.boolean().default(true),
   planner: z.boolean().default(true),
+  pages: z.boolean().default(true),
+  whiteboard: z.boolean().default(true),
 });
 
 export const POLICY_SCHEMAS = {

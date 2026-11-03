@@ -3,7 +3,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
 import {
-  CalendarClock, Check, ChevronDown, ChevronRight, CircleHelp, Copy, Hash, Loader2, MapPin, MessageSquare, Repeat, Settings,
+  CalendarClock, Check, ChevronDown, ChevronRight, CircleHelp, Copy, Hash, Loader2, MapPin, MessageSquare, NotebookPen, Repeat, Settings,
   Trash2, Users, Video, X,
 } from 'lucide-react';
 import Link from 'next/link';
@@ -13,6 +13,7 @@ import type { MeetingInfo, MeetingOccurrence, RsvpInput, RsvpState } from '@team
 import { Avatar } from '@/components/avatar';
 import { errorText, inputClass, primaryButton, secondaryButton } from '@/components/teams/ui';
 import { api } from '@/lib/api';
+import type { PageDetail } from '@teamsphere/shared';
 import { useAuth } from '@/lib/auth-store';
 import { formatCallDuration } from '@/lib/calls';
 import {
@@ -117,6 +118,15 @@ function DetailsBody({ meeting, occurrence, onClose }: { meeting: MeetingInfo; o
         <Link href={`/chat/${meeting.conversationId}`} className={clsx(secondaryButton, 'flex items-center gap-1.5')}>
           <MessageSquare size={16} /> Chat
         </Link>
+        {meeting.myRole && (
+          <button
+            // Opens (and on first use creates) the meeting's co-edited notes page in the Pages app.
+            onClick={() => void api<PageDetail>(`/pages/meeting/${meeting.id}`).then((p) => router.push(`/pages?page=${p.id}`)).catch(() => undefined)}
+            className={clsx(secondaryButton, 'flex items-center gap-1.5')}
+          >
+            <NotebookPen size={16} /> Notes
+          </button>
+        )}
         {isOrganizer && (
           <Link href={`/meetings/${meeting.id}/options`} className={clsx(secondaryButton, 'flex items-center gap-1.5')}>
             <Settings size={16} /> Options

@@ -8,5 +8,6 @@ import { PlannerService } from './planner.service';
   imports: [FilesModule],
   controllers: [PlannerController, ChannelTabsController],
   providers: [PlannerService, ChannelTabsService],
+  exports: [ChannelTabsService],
 })
 export class PlannerModule {}

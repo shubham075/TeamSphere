@@ -74,6 +74,15 @@ export class ChannelTabsService {
         if (!plan) throw new BadRequestException('Only plans in this channel can be added as tabs');
         return plan.title.slice(0, 60);
       }
+      case 'wiki':
+        // The channel's whole page tree; one wiki tab per channel.
+        if (refId !== channelId) throw new BadRequestException('A wiki tab shows its own channel’s pages');
+        return 'Wiki';
+      case 'whiteboard': {
+        const board = await this.prisma.board.findFirst({ where: { id: refId, ownerType: 'channel', ownerId: channelId }, select: { title: true } });
+        if (!board) throw new BadRequestException('Only whiteboards in this channel can be added as tabs');
+        return board.title.slice(0, 60);
+      }
     }
   }
 

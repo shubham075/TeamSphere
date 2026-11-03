@@ -10,3 +10,4 @@ export * from './meetings';
 export * from './admin';
 export * from './search';
 export * from './planner';
+export * from './pages';

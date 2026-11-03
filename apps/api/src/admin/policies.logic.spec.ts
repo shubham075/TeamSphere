@@ -33,7 +33,7 @@ describe('resolvePolicies', () => {
   it('falls back to built-in defaults (everything allowed)', () => {
     const { effective, sources } = resolvePolicies([]);
     expect(effective.messaging.allowEdit).toBe(true);
-    expect(effective.apps).toEqual({ files: true, meetings: true, calls: true, planner: true });
+    expect(effective.apps).toEqual({ files: true, meetings: true, calls: true, planner: true, pages: true, whiteboard: true });
     expect(sources.every((s) => s.via === 'builtin')).toBe(true);
   });
 

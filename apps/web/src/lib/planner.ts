@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
-  BucketInfo, ChannelTabInfo, ChecklistItemInfo, CreatePlanInput, CreateTaskInput, PlanDetail, PlanSummary, PlanTasks,
+  BucketInfo, ChannelTabApp, ChannelTabInfo, ChecklistItemInfo, CreatePlanInput, CreateTaskInput, PlanDetail, PlanSummary, PlanTasks,
   TaskAttachmentInfo, TaskCommentInfo, TaskDetail, TaskInfo, TaskLabelColor, TaskPriority, TaskProgress, TodoList, UpdatePlanInput,
   UpdateTaskInput,
 } from '@teamsphere/shared';
@@ -214,6 +214,6 @@ export const plannerApi = {
     return api<TaskAttachmentInfo>(`/planner/tasks/${taskId}/attachments`, { method: 'POST', body: form });
   },
   deleteAttachment: (id: string) => api(`/planner/attachments/${id}`, { method: 'DELETE' }),
-  addTab: (channelId: string, refId: string) => api<ChannelTabInfo>(`/channels/${channelId}/tabs`, { method: 'POST', json: { app: 'planner', refId } }),
+  addTab: (channelId: string, refId: string, app: ChannelTabApp = 'planner') => api<ChannelTabInfo>(`/channels/${channelId}/tabs`, { method: 'POST', json: { app, refId } }),
   removeTab: (channelId: string, tabId: string) => api(`/channels/${channelId}/tabs/${tabId}`, { method: 'DELETE' }),
 };

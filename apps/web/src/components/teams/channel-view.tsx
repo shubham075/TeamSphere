@@ -2,7 +2,7 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import clsx from 'clsx';
-import { Archive, Bell, BellOff, FileText, LayoutGrid, Loader2, Pencil, Plus, Settings, X } from 'lucide-react';
+import { Archive, Bell, BellOff, BookOpen, FileText, LayoutGrid, Loader2, Pencil, PenTool, Plus, Settings, X } from 'lucide-react';
 import { Fragment, ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { AttachmentInfo, ChannelInfo, ChannelNotes, TeamInfo } from '@teamsphere/shared';
 import { RichText } from '@/components/chat/rich-text';
@@ -19,6 +19,8 @@ import { ChannelIcon, primaryButton, secondaryButton } from './ui';
 import { MeetNowButton } from '@/components/meetings/meet-now-button';
 import { AddTabDialog } from '@/components/planner/add-tab-dialog';
 import { PlanView } from '@/components/planner/plan-view';
+import { WikiView } from '@/components/pages/wiki-view';
+import { BoardView } from '@/components/whiteboard/board-view';
 import { plannerApi, usePlannerMutation, useChannelTabs } from '@/lib/planner';
 
 /** Built-in tabs, or `tab:<ChannelTab id>` for an app tab (Planner…). */
@@ -96,12 +98,12 @@ export function ChannelView({ team, channel, meId }: { team: TeamInfo; channel: 
                 onClick={() => setTab(`tab:${t.id}`)}
                 className={clsx('flex items-center gap-1.5 border-b-2 pb-2 text-sm whitespace-nowrap', tab === `tab:${t.id}` ? 'border-brand font-semibold text-text' : 'border-transparent text-muted hover:text-text')}
               >
-                <LayoutGrid size={14} aria-hidden /> {t.title}
+                {t.app === 'wiki' ? <BookOpen size={14} aria-hidden /> : t.app === 'whiteboard' ? <PenTool size={14} aria-hidden /> : <LayoutGrid size={14} aria-hidden />} {t.title}
               </button>
               {!readOnly && (
                 <button
                   onClick={() => {
-                    if (!confirm(`Remove the “${t.title}” tab? The plan itself is kept.`)) return;
+                    if (!confirm(`Remove the “${t.title}” tab? Its content is kept.`)) return;
                     removeTab.mutate(t.id);
                     if (tab === `tab:${t.id}`) setTab('posts');
                   }}
@@ -125,6 +127,8 @@ export function ChannelView({ team, channel, meId }: { team: TeamInfo; channel: 
       {tab === 'files' && <FilesTab channel={channel} />}
       {tab === 'notes' && <NotesTab channel={channel} readOnly={readOnly} />}
       {activeAppTab?.app === 'planner' && <PlanView key={activeAppTab.refId} planId={activeAppTab.refId} compact onDeleted={() => setTab('posts')} />}
+      {activeAppTab?.app === 'wiki' && <WikiView key={channel.id} channelId={channel.id} readOnly={readOnly} />}
+      {activeAppTab?.app === 'whiteboard' && <BoardView key={activeAppTab.refId} boardId={activeAppTab.refId} compact onDeleted={() => setTab('posts')} />}
       {tab.startsWith('tab:') && appTabs && !activeAppTab && <p className="p-6 text-sm text-muted">This tab was removed.</p>}
       {addTab && <AddTabDialog channelId={channel.id} existing={appTabs ?? []} onClose={() => setAddTab(false)} onAdded={(id) => (setAddTab(false), setTab(`tab:${id}`))} />}
       {settings && <ChannelSettingsDialog team={team} channel={channel} onClose={() => setSettings(false)} />}

@@ -131,3 +131,57 @@ body {
   10% { opacity: 1; }
   100% { transform: translateY(-160px); opacity: 0; }
 }
+
+/* Pages editor (Tiptap). Content uses the theme tokens so light, dark and high contrast all work. */
+.tiptap-page {
+  min-height: 12rem;
+  line-height: 1.65;
+  font-size: 0.95rem;
+}
+.tiptap-page > * + * { margin-top: 0.6em; }
+.tiptap-page h1 { font-size: 1.75rem; font-weight: 700; line-height: 1.25; margin-top: 1em; }
+.tiptap-page h2 { font-size: 1.35rem; font-weight: 650; line-height: 1.3; margin-top: 0.9em; }
+.tiptap-page h3 { font-size: 1.1rem; font-weight: 650; margin-top: 0.8em; }
+.tiptap-page ul { list-style: disc; padding-left: 1.5rem; }
+.tiptap-page ol { list-style: decimal; padding-left: 1.5rem; }
+.tiptap-page a { color: var(--brand); text-decoration: underline; }
+.tiptap-page blockquote { border-left: 3px solid var(--border); padding-left: 0.9rem; color: var(--text-muted); }
+.tiptap-page code { background: var(--surface-2); border-radius: 4px; padding: 0.1em 0.3em; font-size: 0.88em; }
+.tiptap-page pre { background: var(--surface-2); border-radius: 6px; padding: 0.75rem 1rem; overflow-x: auto; }
+.tiptap-page pre code { background: none; padding: 0; }
+.tiptap-page ul[data-type='taskList'] { list-style: none; padding-left: 0.25rem; }
+.tiptap-page ul[data-type='taskList'] li { display: flex; gap: 0.5rem; align-items: flex-start; }
+.tiptap-page ul[data-type='taskList'] li > label { margin-top: 0.2em; }
+.tiptap-page ul[data-type='taskList'] li > label input { accent-color: var(--brand); }
+.tiptap-page ul[data-type='taskList'] li[data-checked='true'] > div { color: var(--text-muted); text-decoration: line-through; }
+.tiptap-page p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--text-muted);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+/* Other people's carets: a thin line in their color with a name tag. */
+.collaboration-carets__caret {
+  border-left: 1px solid;
+  border-right: 1px solid;
+  margin-left: -1px;
+  margin-right: -1px;
+  position: relative;
+  word-break: normal;
+  pointer-events: none;
+}
+.collaboration-carets__label {
+  position: absolute;
+  top: -1.4em;
+  left: -1px;
+  border-radius: 3px 3px 3px 0;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: normal;
+  padding: 0.1rem 0.3rem;
+  white-space: nowrap;
+  user-select: none;
+}
+.tiptap-dark .tiptap-page code, .tiptap-dark .tiptap-page pre { background: rgb(255 255 255 / 0.1); }
