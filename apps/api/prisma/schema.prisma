@@ -1297,3 +1297,115 @@ model BoardMember {
   @@id([boardId, userId])
   @@index([userId])
 }
+
+// ---------------------------------------------------------------- Phase 8c: Lists & Forms
+
+enum CollabOwnerType {
+  user
+  channel
+}
+
+/// A custom list: typed columns (shared ListColumn JSON) and rows whose `values` are keyed by column id.
+model List {
+  id          String          @id @default(cuid())
+  ownerType   CollabOwnerType
+  ownerId     String
+  title       String
+  description String          @default("")
+  columns     Json            @default("[]")
+  /// Saved views: [{ id, name, sort, filters, groupBy, layout }].
+  views       Json            @default("[]")
+  createdById String
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  members ListMember[]
+  items   ListItem[]
+
+  @@index([ownerType, ownerId])
+}
+
+model ListMember {
+  listId  String
+  list    List     @relation(fields: [listId], references: [id], onDelete: Cascade)
+  userId  String
+  addedAt DateTime @default(now())
+
+  @@id([listId, userId])
+  @@index([userId])
+}
+
+model ListItem {
+  id          String   @id @default(cuid())
+  listId      String
+  list        List     @relation(fields: [listId], references: [id], onDelete: Cascade)
+  values      Json     @default("{}")
+  position    Float    @default(0)
+  createdById String
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([listId, position])
+}
+
+enum FormStatus {
+  draft
+  open
+  closed
+}
+
+/// A form or survey. Questions are shared FormQuestion JSON; responses are stored per submission.
+model Form {
+  id           String          @id @default(cuid())
+  ownerType    CollabOwnerType
+  ownerId      String
+  title        String
+  description  String          @default("")
+  questions    Json            @default("[]")
+  status       FormStatus      @default(draft)
+  closesAt     DateTime?
+  /// Responses carry no respondent id (FormRespondent still records who answered when onePerPerson is on).
+  anonymous    Boolean         @default(false)
+  onePerPerson Boolean         @default(true)
+  createdById  String
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  members     FormMember[]
+  responses   FormResponse[]
+  respondents FormRespondent[]
+
+  @@index([ownerType, ownerId])
+}
+
+model FormMember {
+  formId  String
+  form    Form     @relation(fields: [formId], references: [id], onDelete: Cascade)
+  userId  String
+  addedAt DateTime @default(now())
+
+  @@id([formId, userId])
+  @@index([userId])
+}
+
+model FormResponse {
+  id           String   @id @default(cuid())
+  formId       String
+  form         Form     @relation(fields: [formId], references: [id], onDelete: Cascade)
+  respondentId String?
+  answers      Json
+  createdAt    DateTime @default(now())
+
+  @@index([formId, createdAt])
+}
+
+/// Who has answered a form, kept apart from the answers so anonymous forms can still allow one response per person.
+model FormRespondent {
+  formId String
+  form   Form     @relation(fields: [formId], references: [id], onDelete: Cascade)
+  userId String
+  at     DateTime @default(now())
+
+  @@id([formId, userId])
+}

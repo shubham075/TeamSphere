@@ -19,6 +19,7 @@ import { AdminModule } from './admin/admin.module';
 import { SearchModule } from './search/search.module';
 import { PlannerModule } from './planner/planner.module';
 import { CollabModule } from './collab/collab.module';
+import { ListsModule } from './lists/lists.module';
 import { AccessTokenGuard, RolesGuard } from './common/guards';
 import { Public } from './common/auth.decorators';
 
@@ -55,6 +56,7 @@ class HealthController {
     SearchModule,
     PlannerModule,
     CollabModule,
+    ListsModule,
   ],
   controllers: [HealthController],
   providers: [

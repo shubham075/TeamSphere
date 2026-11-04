@@ -52,6 +52,8 @@ export const appsPolicySchema = z.object({
   planner: z.boolean().default(true),
   pages: z.boolean().default(true),
   whiteboard: z.boolean().default(true),
+  lists: z.boolean().default(true),
+  forms: z.boolean().default(true),
 });
 
 export const POLICY_SCHEMAS = {

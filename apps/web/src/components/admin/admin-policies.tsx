@@ -30,6 +30,8 @@ const FIELDS: Record<PolicyType, { key: string; label: string; hint?: string }[]
     { key: 'planner', label: 'Planner (plans and tasks)' },
     { key: 'pages', label: 'Pages (new pages and wikis)' },
     { key: 'whiteboard', label: 'Whiteboard app (new boards)' },
+    { key: 'lists', label: 'Lists (new lists)' },
+    { key: 'forms', label: 'Forms (new forms)' },
   ],
 };
 

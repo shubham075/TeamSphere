@@ -17,7 +17,7 @@ export type PlanRole = 'owner' | 'edit' | 'view';
 
 /** Apps that can be pinned as a channel tab after Posts / Files / Notes. */
 /** `wiki` = the channel's page tree (refId is the channel id); `whiteboard` = a channel board. */
-export const CHANNEL_TAB_APPS = ['planner', 'wiki', 'whiteboard'] as const;
+export const CHANNEL_TAB_APPS = ['planner', 'wiki', 'whiteboard', 'list', 'form'] as const;
 export type ChannelTabApp = (typeof CHANNEL_TAB_APPS)[number];
 
 export const PLANNER_WS_EVENTS = {

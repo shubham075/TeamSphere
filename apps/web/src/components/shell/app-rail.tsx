@@ -39,7 +39,9 @@ const ADMIN_APP: RailApp = { id: 'admin', label: 'Admin', icon: ShieldCheck, pha
 
 export function AppRail() {
   const pathname = usePathname();
-  const current = pathname.split('/')[1];
+  const segment = pathname.split('/')[1];
+  // Apps opened from the Apps launcher keep the launcher highlighted.
+  const current = segment === 'lists' || segment === 'forms' ? 'apps' : segment;
   const { data: conversations } = useConversations();
   const { data: activity } = useActivity();
   const teamsUnread = useTeamsUnread();

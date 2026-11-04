@@ -9,6 +9,7 @@ import { FilesRealtime } from '@/components/files/files-realtime';
 import { MeetingsRealtime } from '@/components/meetings/meetings-realtime';
 import { PlannerRealtime } from '@/components/planner/planner-realtime';
 import { CollabRealtime } from '@/components/pages/collab-realtime';
+import { ListsRealtime } from '@/components/lists/lists-realtime';
 import { TeamsRealtime } from '@/components/teams/teams-realtime';
 import { AppRail } from '@/components/shell/app-rail';
 import { TitleBar } from '@/components/shell/title-bar';
@@ -42,7 +43,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <FilesRealtime />
         <PlannerRealtime />
       <CollabRealtime />
+      <ListsRealtime />
         <CollabRealtime />
+        <ListsRealtime />
         <main className="flex min-h-0 min-w-0 flex-1">{children}</main>
       </div>
     );

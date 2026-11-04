@@ -83,6 +83,16 @@ export class ChannelTabsService {
         if (!board) throw new BadRequestException('Only whiteboards in this channel can be added as tabs');
         return board.title.slice(0, 60);
       }
+      case 'list': {
+        const list = await this.prisma.list.findFirst({ where: { id: refId, ownerType: 'channel', ownerId: channelId }, select: { title: true } });
+        if (!list) throw new BadRequestException('Only lists in this channel can be added as tabs');
+        return list.title.slice(0, 60);
+      }
+      case 'form': {
+        const form = await this.prisma.form.findFirst({ where: { id: refId, ownerType: 'channel', ownerId: channelId }, select: { title: true } });
+        if (!form) throw new BadRequestException('Only forms in this channel can be added as tabs');
+        return form.title.slice(0, 60);
+      }
     }
   }
 
